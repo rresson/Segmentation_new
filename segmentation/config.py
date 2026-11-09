@@ -1,4 +1,4 @@
-"""集中配置：默认联合训练 MobileV3Backbone 和 MobileV3FPNHead。"""
+"""集中配置：默认 SeaFormer + MobileV3FPNHead 的 C3 单路分割头。"""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from .utils import resolve_path
 
 @dataclass
 class Config:
-    # pretrain：CNN + SimpleHead。
+    # pretrain：旧 CNN + SimpleHead；SeaFormer 始终使用 MobileV3C3Head。
     # head：冻结 CNN，只训练所选分割头。
     # custom：使用下面设置的训练范围。
     mode: Literal["pretrain", "head", "custom"] = "custom"
 
-    data_root: str = "F:/Segmentation_Project/ADEChallengeData2016"
-    output_root: str = "runs/ade20k_mobile_v3"
+    data_root: str = "ADEChallengeData2016"
+    output_root: str = "runs/ade20k_seaformer"
     output_dir: str = ""
 
-    # 新架构默认从随机初始化开始。
-    backbone_checkpoint: str = "runs/ade20k_mobile_v3/pretrain/backbone_best_miou.pth"
+    # 空路径：新实验，stem 默认 ImageNet 初始化，其他模块随机初始化。
+    backbone_checkpoint: str = ""
     checkpoint_prefix: str = ""
     resume: str = ""
     allow_random_backbone: bool = True
@@ -29,13 +29,20 @@ class Config:
         "small_cnn",
         "demo",
         "mobile_v3",
-    ] = "mobile_v3"
+        "seaformer",
+    ] = "seaformer"
 
     head_name: Literal[
         "fpn",
         "simple",
         "mobile_fpn",
-    ] = "mobile_fpn"
+        "mobile_c3",
+    ] = "mobile_c3"
+
+    stem_pretrained: bool = True
+    seaformer_attention: Literal["original", "multiscale", "lepe"] = "multiscale"
+    seaformer_depths: tuple[int, int, int] = (1, 2, 2)
+    seaformer_learnable_squeeze: bool = False
 
     # 控制 FPN 融合通道，必须为 8 的倍数。
     head_width: int = 128
@@ -85,6 +92,7 @@ def prepare_config(config: Config) -> Config:
         "small_cnn",
         "demo",
         "mobile_v3",
+        "seaformer",
     ):
         raise ValueError("Unknown backbone_name")
 
@@ -92,6 +100,7 @@ def prepare_config(config: Config) -> Config:
         "fpn",
         "simple",
         "mobile_fpn",
+        "mobile_c3",
     ):
         raise ValueError("Unknown head_name")
 
@@ -101,7 +110,7 @@ def prepare_config(config: Config) -> Config:
         )
 
     if cfg.mode == "pretrain":
-        cfg.head_name = "simple"
+        cfg.head_name = "mobile_c3" if cfg.backbone_name == "seaformer" else "simple"
         cfg.trainable_prefixes = (
             "backbone",
             "decode_head",
@@ -117,6 +126,17 @@ def prepare_config(config: Config) -> Config:
                 resolve_path(cfg.output_root)
                 / "pretrain/backbone_best_miou.pth"
             )
+
+    if cfg.backbone_name == "seaformer":
+        if cfg.head_name != "mobile_c3":
+            raise ValueError("SeaFormer requires head_name='mobile_c3' (C3 only)")
+        if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
+            raise ValueError("Unknown seaformer_attention")
+        if (len(cfg.seaformer_depths) != 3
+                or any(type(d) is not int or d < 1 for d in cfg.seaformer_depths)):
+            raise ValueError("seaformer_depths requires three positive integers")
+    elif cfg.head_name == "mobile_c3":
+        raise ValueError("mobile_c3 expects the SeaFormer single-output backbone")
 
     cfg.data_root = str(resolve_path(cfg.data_root))
     cfg.output_root = str(resolve_path(cfg.output_root))

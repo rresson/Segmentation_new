@@ -25,6 +25,7 @@ def architecture_name(cfg: Config) -> str:
         "small_cnn": "SmallCNNBackbone_v1",
         "demo": "DemoBackbone_v1",
         "mobile_v3": "MobileV3Backbone_v1",
+        "seaformer": "SeaFormerSingleFusion_v1",
     }[cfg.backbone_name]
 
 
@@ -41,7 +42,12 @@ def export_backbone(
                 in model.backbone.state_dict().items()
             },
             "architecture": architecture_name(cfg),
-            "out_channels": (32, 64, 128),
+            "out_channels": tuple(model.backbone.out_channels),
+            **({
+                "seaformer_attention": cfg.seaformer_attention,
+                "seaformer_depths": cfg.seaformer_depths,
+                "seaformer_learnable_squeeze": cfg.seaformer_learnable_squeeze,
+            } if cfg.backbone_name == "seaformer" else {}),
             "mean": cfg.mean,
             "std": cfg.std,
         },
@@ -60,7 +66,9 @@ def load_backbone(
             )
 
         print(
-            "CNN weights randomly initialized.",
+            ("SeaFormer: ImageNet stem; context/fusion/head require training."
+             if cfg.backbone_name == "seaformer" and cfg.stem_pretrained
+             else "CNN weights randomly initialized."),
             flush=True,
         )
         return
@@ -90,6 +98,11 @@ def load_backbone(
     # 完整 checkpoint 的配置位于 config 内；
     # 独立 CNN 导出文件的配置位于顶层。
     metadata = checkpoint.get("config", checkpoint)
+
+    if cfg.backbone_name == "seaformer":
+        for key in ("seaformer_attention", "seaformer_depths", "seaformer_learnable_squeeze"):
+            if key in metadata and metadata[key] != getattr(cfg, key):
+                raise ValueError(f"CNN checkpoint {key} differs from current model")
 
     if (
         "backbone_name" in metadata
@@ -188,6 +201,9 @@ def check_resume_config(
         "max_train_samples": 0,
         "max_val_samples": 0,
     }
+
+    if cfg.backbone_name == "seaformer":
+        keys += ("seaformer_attention", "seaformer_depths", "seaformer_learnable_squeeze")
 
     for key in keys:
         previous_value = previous.get(

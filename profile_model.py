@@ -1,9 +1,9 @@
-"""原版分割网络的参数量与前向 MACs 统计。
+"""分割网络的参数量与前向 MACs 统计。
 
 统计范围：
-1. nn.Conv2d 和 nn.Linear，1 次乘加记为 1 MAC。
+1. nn.Conv2d、nn.Linear 及 SeaFormer 的 QK^T/AV，1 次乘加记为 1 MAC。
 2. Params 包含冻结参数，不包含 BatchNorm 等模块的 buffers。
-3. 不统计 bias 加法、池化、归一化、激活、插值、
+3. 不统计 bias 加法、池化、归一化、激活、插值、逐元素门控/加权 squeeze、
    损失、反向传播和优化器计算。
 
 模型要求：
@@ -111,11 +111,12 @@ def profile_model(
     }
 
     batch_size = inputs.shape[0]
-    cost_keys = ("convolution_macs", "linear_macs")
+    cost_keys = ("convolution_macs", "linear_macs", "attention_macs")
 
     def record(name, layer, args, output):
         convolution_macs = 0
         linear_macs = 0
+        attention_macs = 0
 
         if isinstance(layer, nn.Conv2d):
             kernel_elements = (
@@ -132,6 +133,8 @@ def profile_model(
 
         elif isinstance(layer, nn.Linear):
             linear_macs = output.numel() * layer.in_features
+        elif getattr(layer, "macs_kind", None) == "attention_macs":
+            attention_macs = layer.count_macs(args, output)
 
         if name.startswith("backbone."):
             component = "backbone"
@@ -148,6 +151,7 @@ def profile_model(
                 "output_shape": list(output.shape),
                 "convolution_macs": convolution_macs,
                 "linear_macs": linear_macs,
+                "attention_macs": attention_macs,
             }
         )
 
@@ -163,7 +167,8 @@ def profile_model(
 
     try:
         for name, layer in model.named_modules():
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+            if (isinstance(layer, (nn.Conv2d, nn.Linear))
+                    or getattr(layer, "macs_kind", None) == "attention_macs"):
                 handles.append(
                     layer.register_forward_hook(
                         lambda module, args, output, name=name:
@@ -282,8 +287,9 @@ def print_profile(report: dict) -> None:
         )
 
     print(
-        "MACs contains only Conv2d/Linear forward multiplication;"
-        "does not include interpolation, normalization, or backpropagation.\n",
+        f"Attention matrix MACs/batch: {report['attention_macs']:,}. "
+        "MACs count Conv2d/Linear and QK^T/AV; exclude interpolation, "
+        "normalization, softmax, elementwise gates/squeeze and backpropagation.\n",
         flush=True,
     )
 
@@ -370,6 +376,8 @@ def main() -> None:
     from segmentation.models import build_model
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("pretrain", "head", "custom"),
+                        help="Profile the selected training range without loading weights")
     parser.add_argument(
         "--size",
         type=int,
@@ -388,7 +396,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = prepare_config(Config())
+    config = Config()
+    if args.mode is not None:
+        config.mode = args.mode
+    cfg = prepare_config(config)
     size = cfg.crop_size if args.size is None else args.size
 
     if size < 32 or args.batch_size < 1:
@@ -398,7 +409,7 @@ def main() -> None:
 
     # 结构统计不需要加载 checkpoint。
     # 由 prepare_config 应用 pretrain/head/custom 模式设置。
-    model = build_model(cfg)
+    model = build_model(cfg, initialize_stem=False)
     configure_trainable(model, cfg.trainable_prefixes)
 
     inputs = torch.zeros(

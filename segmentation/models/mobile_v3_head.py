@@ -166,3 +166,30 @@ class MobileV3FPNHead(nn.Module):
 
         # 返回 logits，由原 engine.py 对齐标签尺寸。
         return self.classifier(fused)
+
+
+class MobileV3C3Head(nn.Module):
+    """原 MobileV3FPNHead 的完整 C3 路径：context → lateral → refine → classifier。
+
+    只接受一路 128 通道特征，不建立 C1/C2、top-down 或多尺度 cat/fuse。
+    两个 128→768→128 context 块及 GN/DW/PW 操作均与原头一致。
+    """
+
+    def __init__(self, in_channels: int = 128, num_classes: int = 150, width: int = 128):
+        super().__init__()
+        if in_channels != 128:
+            raise ValueError("MobileV3 C3 context requires 128 input channels")
+        if width < 8 or width % 8:
+            raise ValueError("width must be a positive multiple of 8")
+        self.context = nn.Sequential(
+            InvertedResidualV3(128, 128, 768, kernel_size=5, norm="gn"),
+            InvertedResidualV3(128, 128, 768, kernel_size=5, norm="gn"),
+        )
+        self.lateral = nn.Conv2d(128, width, kernel_size=1)
+        self.refine = SeparableConv(width, width)
+        self.classifier = nn.Conv2d(width, num_classes, kernel_size=1)
+
+    def forward(self, features: Sequence[Tensor]) -> Tensor:
+        if isinstance(features, Tensor) or len(features) != 1:
+            raise ValueError("MobileV3C3Head requires exactly one C3 feature map")
+        return self.classifier(self.refine(self.lateral(self.context(features[0]))))

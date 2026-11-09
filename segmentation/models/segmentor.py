@@ -11,7 +11,7 @@ from ..config import Config
 from .cnn import DemoBackbone, SmallCNNBackbone
 from .heads import FPNHead, SimpleHead
 from .mobile_v3_cnn import MobileV3Backbone
-from .mobile_v3_head import MobileV3FPNHead
+from .mobile_v3_head import MobileV3C3Head, MobileV3FPNHead
 
 
 class Segmentor(nn.Module):
@@ -38,7 +38,7 @@ class Segmentor(nn.Module):
         return self.decode_head(features)
 
 
-def build_model(cfg: Config) -> Segmentor:
+def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmentor:
     backbone: (
         SmallCNNBackbone
         | DemoBackbone
@@ -51,6 +51,18 @@ def build_model(cfg: Config) -> Segmentor:
         backbone = DemoBackbone()
     elif cfg.backbone_name == "mobile_v3":
         backbone = MobileV3Backbone()
+    elif cfg.backbone_name == "seaformer":
+        # 延迟导入：旧模型无需安装 torchvision；恢复完整权重不需要联网。
+        from .seaformer import SeaFormerBackbone
+
+        if initialize_stem is None:
+            initialize_stem = cfg.stem_pretrained and not (cfg.resume or cfg.backbone_checkpoint)
+        backbone = SeaFormerBackbone(
+            pretrained_stem=bool(initialize_stem),
+            attention=cfg.seaformer_attention,
+            depths=cfg.seaformer_depths,
+            use_learnable_squeeze=cfg.seaformer_learnable_squeeze,
+        )
     else:
         raise ValueError(
             f"未知 backbone：{cfg.backbone_name}"
@@ -58,7 +70,14 @@ def build_model(cfg: Config) -> Segmentor:
 
     head: nn.Module
 
-    if cfg.head_name == "fpn":
+    if cfg.backbone_name == "seaformer" and cfg.head_name != "mobile_c3":
+        raise ValueError("SeaFormer supports only the single-input MobileV3C3Head")
+
+    if cfg.head_name == "mobile_c3":
+        if len(backbone.out_channels) != 1:
+            raise ValueError("MobileV3C3Head requires a single-output backbone")
+        head = MobileV3C3Head(backbone.out_channels[0], cfg.num_classes, cfg.head_width)
+    elif cfg.head_name == "fpn":
         head = FPNHead(
             backbone.out_channels,
             cfg.num_classes,

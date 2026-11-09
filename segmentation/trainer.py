@@ -32,7 +32,7 @@ from .models import build_model
 from .utils import seed_everything, seed_worker
 
 
-def run_experiment(config: Config) -> None:
+def run_experiment(config: Config) -> dict:
     cfg = prepare_config(config)
     seed_everything(cfg.seed)
 
@@ -154,8 +154,8 @@ def run_experiment(config: Config) -> None:
     output.mkdir(parents=True, exist_ok=True)
 
     # 使用真实预处理后的训练 batch。
-    # 原 profile_model.py 会统计 DW、PW 和 SE 中的 Conv2d。
-    profile_training(
+    # 包含卷积/线性层和 SeaFormer 的 QK^T、AV，训练开始前打印并保存。
+    profile = profile_training(
         model,
         train_loader,
         output_dir=output,
@@ -336,3 +336,5 @@ def run_experiment(config: Config) -> None:
             f"{time.time() - started:.1f}s",
             flush=True,
         )
+
+    return profile
