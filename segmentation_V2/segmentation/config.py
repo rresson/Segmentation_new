@@ -8,7 +8,7 @@ from .utils import resolve_path
 @dataclass
 class Config:
     mode: Literal["pretrain", "head", "custom"] = "pretrain"
-    data_root: str = "ADEChallengeData2016"
+    data_root: str = "F:/Segmentation_Project/ADEChallengeData2016"
     output_root: str = "runs/ade20k"
     output_dir: str = ""
     run_name: str = ""            # 如 run3；空值：pretrain 新建，custom/head 选择最近的 pretrain run
@@ -18,21 +18,22 @@ class Config:
     resume: str = ""               # 仅用于本训练器保存的完整训练状态
     allow_random_backbone: bool = True
     backbone_name: str = "uploaded_mobile_v2"
-    head_name: Literal["original", "multilevel"] = "original"
+    head_name: Literal["original", "multilevel"] = "multilevel"
+    segment_type = "original"
     head_width: int = 128          # 对应 main_network.hidden_channel
     stem_pretrained: bool = True
-    attention_type: Literal["original", "multiscale", "lepe"] = "multiscale"
+    attention_type: Literal["original", "multiscale", "lepe"] = "original"
     fusion_type: Literal["original", "enhanced"] = "enhanced"
     dim: int = 64                 # 原始 stem 输出 64，不改变网络结构
     key_dim: int = 16
     num_heads: int = 4
     attn_ratio: float = 2.0
     pos_shape: int = 16
-    use_learnable_squeeze: bool = False
+    use_learnable_squeeze: bool = True
     ffn_ratio: float = 2.0
     expansion_ratio1: float = 2.0
     expansion_ratio2: float = 2.0
-    use_aux: bool = True          # 原网络可选辅助头；False 时只有主头
+    use_aux: bool = False          # 原网络可选辅助头；False 时只有主头
     aux_loss_weight: float = 0.4
     trainable_prefixes: tuple[str, ...] = ("backbone", "decode_head")
     num_classes: int = 150
