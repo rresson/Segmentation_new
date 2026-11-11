@@ -58,7 +58,9 @@ def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmento
         from .seaformer import SeaFormerBackbone
 
         if initialize_stem is None:
-            initialize_stem = cfg.stem_pretrained and not (cfg.resume or cfg.backbone_checkpoint)
+            initialize_stem = cfg.stem_pretrained and not (
+                cfg.resume or cfg.backbone_checkpoint or cfg.model_checkpoint
+            )
         backbone = SeaFormerBackbone(
             pretrained_stem=bool(initialize_stem),
             attention=cfg.seaformer_attention,

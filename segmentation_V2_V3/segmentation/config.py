@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import re
 from typing import Literal
 
 from .utils import resolve_path
@@ -18,9 +19,11 @@ class Config:
     data_root: str = "ADEChallengeData2016"
     output_root: str = "runs/ade20k_v2_v3"
     output_dir: str = ""
+    run_name: str = ""  # 空值自动分配 runN；pipeline 根据 backbone 绑定实验。
 
     # 空路径：新实验，stem 默认 ImageNet 初始化，其他模块随机初始化。
     backbone_checkpoint: str = ""
+    model_checkpoint: str = ""  # 初始化完整模型；单独训练 backbone 时保留已训练 head。
     checkpoint_prefix: str = ""
     resume: str = ""
     allow_random_backbone: bool = True
@@ -88,6 +91,11 @@ def prepare_config(config: Config) -> Config:
     """生成实际配置，不修改调用者传入的对象。"""
     cfg = replace(config)
 
+    if cfg.run_name and re.fullmatch(r"run[1-9][0-9]*", cfg.run_name) is None:
+        raise ValueError("run_name must be empty or run followed by a positive integer")
+    if cfg.backbone_checkpoint and cfg.model_checkpoint:
+        raise ValueError("Choose backbone_checkpoint OR model_checkpoint")
+
     if cfg.backbone_name not in (
         "small_cnn",
         "demo",
@@ -121,12 +129,6 @@ def prepare_config(config: Config) -> Config:
         cfg.trainable_prefixes = ("decode_head",)
         cfg.allow_random_backbone = False
 
-        if not cfg.backbone_checkpoint:
-            cfg.backbone_checkpoint = str(
-                resolve_path(cfg.output_root)
-                / "pretrain/backbone_best_miou.pth"
-            )
-
     if cfg.backbone_name == "seaformer":
         if cfg.head_name != "mobile_c3":
             raise ValueError("SeaFormer requires head_name='mobile_c3' (C3 only)")
@@ -153,6 +155,9 @@ def prepare_config(config: Config) -> Config:
 
     if cfg.resume:
         cfg.resume = str(resolve_path(cfg.resume))
+
+    if cfg.model_checkpoint:
+        cfg.model_checkpoint = str(resolve_path(cfg.model_checkpoint))
 
     if (
         cfg.epochs < 1

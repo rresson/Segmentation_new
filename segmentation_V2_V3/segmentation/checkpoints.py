@@ -57,37 +57,18 @@ def export_backbone(
     )
 
 
-def load_backbone(
-    model: Segmentor,
-    cfg: Config,
-) -> None:
-    if not cfg.backbone_checkpoint:
-        if not cfg.allow_random_backbone:
-            raise ValueError(
-                "Please set CNN weights or run mode='pretrain'."
-            )
+def checkpoint_state(checkpoint):
+    state = checkpoint
+    for key in ("model_state_dict", "model", "state_dict"):
+        if key in checkpoint:
+            state = checkpoint[key]
+            break
+    if not isinstance(state, dict) or not state or not all(isinstance(v, torch.Tensor) for v in state.values()):
+        raise ValueError("Expected a nonempty state_dict or model/model_state_dict/state_dict container")
+    return {name.removeprefix("module."): value for name, value in state.items()}
 
-        print(
-            ("SeaFormer: ImageNet stem; context/fusion/head require training."
-             if cfg.backbone_name == "seaformer" and cfg.stem_pretrained
-             else "CNN weights randomly initialized."),
-            flush=True,
-        )
-        return
 
-    path = Path(cfg.backbone_checkpoint)
-
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"CNN weights not found: {path}"
-        )
-
-    checkpoint: dict[str, Any] = torch.load(
-        path,
-        map_location="cpu",
-        weights_only=True,
-    )
-
+def validate_metadata(checkpoint, cfg, *, full_model=False):
     if (
         "architecture" in checkpoint
         and checkpoint["architecture"] != architecture_name(cfg)
@@ -137,15 +118,56 @@ def load_backbone(
                 f"{key} differs from input normalization"
             )
 
-    state = checkpoint.get(
-        "state_dict",
-        checkpoint.get("model", checkpoint.get("model_state_dict", checkpoint)),
+    if full_model:
+        for key in ("backbone_name", "head_name", "head_width", "num_classes"):
+            if key in metadata and metadata[key] != getattr(cfg, key):
+                raise ValueError(f"Full checkpoint {key} differs from current model")
+
+
+def load_full_model(model, checkpoint, cfg):
+    validate_metadata(checkpoint, cfg, full_model=True)
+    model.load_state_dict(checkpoint_state(checkpoint), strict=True)
+
+
+def load_backbone(
+    model: Segmentor,
+    cfg: Config,
+) -> None:
+    if cfg.model_checkpoint:
+        checkpoint = torch.load(cfg.model_checkpoint, map_location="cpu", weights_only=True)
+        load_full_model(model, checkpoint, cfg)
+        print(f"Full model initialized: {cfg.model_checkpoint}", flush=True)
+        return
+    if not cfg.backbone_checkpoint:
+        if not cfg.allow_random_backbone:
+            raise ValueError(
+                "Please set CNN weights or run mode='pretrain'."
+            )
+
+        print(
+            ("SeaFormer: ImageNet stem; context/fusion/head require training."
+             if cfg.backbone_name == "seaformer" and cfg.stem_pretrained
+             else "CNN weights randomly initialized."),
+            flush=True,
+        )
+        return
+
+    path = Path(cfg.backbone_checkpoint)
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"CNN weights not found: {path}"
+        )
+
+    checkpoint: dict[str, Any] = torch.load(
+        path,
+        map_location="cpu",
+        weights_only=True,
     )
 
-    state = {
-        name.removeprefix("module."): value
-        for name, value in state.items()
-    }
+    validate_metadata(checkpoint, cfg)
+
+    state = checkpoint_state(checkpoint)
 
     prefix = cfg.checkpoint_prefix
 

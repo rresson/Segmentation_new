@@ -25,10 +25,13 @@ from .dataset import ADE20KDataset
 from .engine import train_one_epoch, validate
 from .freezing import (
     check_frozen_backbone,
+    check_frozen_head,
     configure_trainable,
     snapshot_frozen_backbone,
+    snapshot_frozen_head,
 )
 from .models import build_model
+from .run_paths import prepare_output_dir
 from .utils import seed_everything, seed_worker
 
 
@@ -47,20 +50,9 @@ def run_experiment(config: Config) -> dict:
             "This project supports CPU or CUDA only"
         )
 
-    output = Path(cfg.output_dir)
-
-    if (
-        cfg.resume
-        and Path(cfg.resume).resolve().parent != output.resolve()
-    ):
-        raise ValueError(
-            "output_dir must match the resume file directory"
-        )
-
-    if not cfg.resume and (output / "last.pth").exists():
-        raise FileExistsError(
-            "Please set resume or change output_dir/output_root."
-        )
+    output = prepare_output_dir(cfg, explicit_output_dir=bool(config.output_dir))
+    cfg.output_dir = str(output)
+    print(f"Output directory: {output}", flush=True)
 
     train_set = ADE20KDataset(cfg, "training")
     val_set = ADE20KDataset(cfg, "validation")
@@ -151,6 +143,7 @@ def run_experiment(config: Config) -> dict:
         )
 
     frozen_reference = snapshot_frozen_backbone(model)
+    frozen_head_reference = snapshot_frozen_head(model)
     output.mkdir(parents=True, exist_ok=True)
 
     # 使用真实预处理后的训练 batch。
@@ -227,6 +220,7 @@ def run_experiment(config: Config) -> dict:
             model,
             frozen_reference,
         )
+        check_frozen_head(model, frozen_head_reference)
 
         improved_miou = miou > best_miou
         improved_accuracy = accuracy > best_accuracy
@@ -324,6 +318,8 @@ def run_experiment(config: Config) -> dict:
             if frozen_reference is not None
             else ""
         )
+        if frozen_head_reference is not None:
+            frozen_message += " | head冻结检查=通过"
 
         print(
             f"Epoch {epoch:03d}/{cfg.epochs} | "
@@ -337,4 +333,4 @@ def run_experiment(config: Config) -> dict:
             flush=True,
         )
 
-    return profile
+    return {**profile, "output_dir": str(output), "run_name": cfg.run_name}
