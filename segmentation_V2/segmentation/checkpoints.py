@@ -122,7 +122,7 @@ def check_resume_config(checkpoint, cfg, trainable_names):
     # 初始化路径和输出位置不影响已恢复的权重；其余实验设置保持一致。
     initialization = {"output_root", "output_dir", "backbone_checkpoint", "model_checkpoint",
                       "checkpoint_prefix", "resume", "stem_pretrained", "allow_random_backbone",
-                      "save_every", "device", "trainable_prefixes"}
+                      "save_every", "device", "trainable_prefixes", "run_name"}
     previous = checkpoint["config"]
     for field in fields(Config):
         if field.name not in initialization and previous.get(field.name) != getattr(cfg, field.name):

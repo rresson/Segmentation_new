@@ -65,3 +65,19 @@ def check_frozen_backbone(
     for name, value in model.backbone.state_dict().items():
         if not torch.equal(value.detach().cpu(), reference[name]):
             raise RuntimeError(f"冻结检查失败：backbone.{name} 发生改变。")
+
+
+def snapshot_frozen_head(model: nn.Module) -> dict[str, Tensor] | None:
+    """backbone-only 训练时保存整个 head 的参数和 BN buffers。"""
+    if any(parameter.requires_grad for parameter in model.decode_head.parameters()):
+        return None
+    return {name: value.detach().cpu().clone()
+            for name, value in model.decode_head.state_dict().items()}
+
+
+def check_frozen_head(model: nn.Module, reference: dict[str, Tensor] | None) -> None:
+    if reference is None:
+        return
+    for name, value in model.decode_head.state_dict().items():
+        if not torch.equal(value.detach().cpu(), reference[name]):
+            raise RuntimeError(f"冻结检查失败：decode_head.{name} 发生改变。")

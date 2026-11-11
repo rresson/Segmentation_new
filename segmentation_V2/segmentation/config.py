@@ -1,5 +1,6 @@
 """上传 MobileNetV2-stem 网络的配置；不依赖 MobileV3 网络或分割头。"""
 from dataclasses import dataclass, replace
+import re
 from typing import Literal
 from .utils import resolve_path
 
@@ -8,9 +9,10 @@ from .utils import resolve_path
 class Config:
     mode: Literal["pretrain", "head", "custom"] = "pretrain"
     data_root: str = "ADEChallengeData2016"
-    output_root: str = "runs/ade20k_mobile_v2"
+    output_root: str = "runs/ade20k"
     output_dir: str = ""
-    backbone_checkpoint: str = ""  # 只初始化 backbone，head 新建
+    run_name: str = ""            # 如 run3；空值：pretrain 新建，custom/head 选择最近的 pretrain run
+    backbone_checkpoint: str = "auto"  # custom/head 自动读取同一 run/pretrain 的 backbone 权重
     model_checkpoint: str = ""     # 初始化完整模型，支持上传网络的 model_state_dict
     checkpoint_prefix: str = ""
     resume: str = ""               # 仅用于本训练器保存的完整训练状态
@@ -54,6 +56,11 @@ class Config:
     seed: int = 42
     device: str = "auto"
 
+    def __post_init__(self):
+        # auto 是配置标记，不是真实文件路径；实际权重在训练启动时解析。
+        if self.backbone_checkpoint == "auto":
+            self.backbone_checkpoint = ""
+
 
 def network_kwargs(cfg: Config) -> dict:
     """与上传 main_network 的参数一一对应，用于构造和权重兼容检查。"""
@@ -69,6 +76,11 @@ def network_kwargs(cfg: Config) -> dict:
 
 def prepare_config(config: Config) -> Config:
     cfg = replace(config)
+    # auto 在训练启动时解析；pretrain 和独立结构统计不读取预训练实验。
+    if cfg.backbone_checkpoint == "auto":
+        cfg.backbone_checkpoint = ""
+    if cfg.run_name and re.fullmatch(r"run[1-9][0-9]*", cfg.run_name) is None:
+        raise ValueError("run_name must be empty or run followed by a positive integer, e.g. run3")
     if cfg.backbone_name != "uploaded_mobile_v2":
         raise ValueError("This adapter requires backbone_name='uploaded_mobile_v2'")
     if cfg.mode not in ("pretrain", "head", "custom"):
@@ -99,8 +111,6 @@ def prepare_config(config: Config) -> Config:
     elif cfg.mode == "head":
         cfg.trainable_prefixes = ("decode_head",)
         cfg.allow_random_backbone = False
-        if not (cfg.backbone_checkpoint or cfg.model_checkpoint or cfg.resume):
-            cfg.backbone_checkpoint = str(resolve_path(cfg.output_root) / "pretrain/backbone_best_miou.pth")
     cfg.data_root = str(resolve_path(cfg.data_root))
     cfg.output_root = str(resolve_path(cfg.output_root))
     cfg.output_dir = str(resolve_path(cfg.output_dir) if cfg.output_dir
