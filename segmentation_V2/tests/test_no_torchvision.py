@@ -5,7 +5,7 @@ import sys
 
 import pytest
 import torch
-from Stem_block import IMAGENET_WEIGHTS_URL, stem_block
+from segmentation.models.Stem_block import IMAGENET_WEIGHTS_URL, stem_block
 
 
 def test_pretrained_loader_keeps_official_keys_and_requires_complete_weights(monkeypatch):

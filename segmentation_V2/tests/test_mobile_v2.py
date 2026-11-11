@@ -10,7 +10,7 @@ import pytest
 import torch
 from torch.nn import functional as F
 
-from network import main_network
+from segmentation.models.network import main_network
 from profile_model import profile_model
 from segmentation import Config, run_experiment
 from segmentation.config import network_kwargs, prepare_config

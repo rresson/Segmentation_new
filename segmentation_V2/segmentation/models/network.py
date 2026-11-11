@@ -3,18 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torchinfo import summary
-from Stem_block import stem_block
-from fusion_block import fusion_block, segment_block, fusion_block2, segment_block2
+from .Stem_block import stem_block
+from .fusion_block import fusion_block, segment_block, fusion_block2, segment_block2
 
 # ============================================================
 # Import three SeaFormer Attention variants
 # ============================================================
 # 1. Original SeaFormer Attention
-from seaformer_attention import context_block as OriginalContextBlock
+from .seaformer_attention import context_block as OriginalContextBlock
 # 2. Adaptive Multi-Scale Local Enhancement version
-from seaformer_attention_multiscale import context_block as MultiScaleContextBlock
+from .seaformer_attention_multiscale import context_block as MultiScaleContextBlock
 # 3. 2D Local Positional Encoding version
-from seaformer_attention_lepe import context_block as LePEContextBlock
+from .seaformer_attention_lepe import context_block as LePEContextBlock
 
 
 # ============================================================

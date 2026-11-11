@@ -25,9 +25,9 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import IterableDataset
-from seaformer_attention import SeaAttention as OriginalSeaAttention
-from seaformer_attention_multiscale import SeaAttention as MultiScaleSeaAttention
-from seaformer_attention_lepe import SeaAttention as LePESeaAttention
+from segmentation.models.seaformer_attention import SeaAttention as OriginalSeaAttention
+from segmentation.models.seaformer_attention_multiscale import SeaAttention as MultiScaleSeaAttention
+from segmentation.models.seaformer_attention_lepe import SeaAttention as LePESeaAttention
 
 ATTENTION_TYPES = (OriginalSeaAttention, MultiScaleSeaAttention, LePESeaAttention)
 

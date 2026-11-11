@@ -2,7 +2,7 @@
 from contextlib import nullcontext
 import torch
 from torch import nn
-from network import main_network
+from .network import main_network
 from ..config import Config, network_kwargs
 
 

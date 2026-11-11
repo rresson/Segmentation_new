@@ -144,3 +144,29 @@ segmentation/freezing.py       梯度、BN/Dropout 与冻结状态检查
 segmentation/checkpoints.py    权重初始化及续训兼容
 tests/test_pipeline.py         pipeline 与跨进程回归验证
 ```
+
+所有模型结构统一放在 `segmentation/models/`，包内使用相对导入。训练、统计和推理入口仍在工程根目录：
+
+```text
+segmentation_V2/
+├── main.py
+├── pipeline.py
+├── profile_model.py
+├── load_checkpoint.py
+└── segmentation/
+    ├── config.py
+    ├── trainer.py
+    └── models/
+        ├── __init__.py
+        ├── segmentor.py
+        ├── network.py
+        ├── Stem_block.py
+        ├── fusion_block.py
+        ├── seaformer_attention.py
+        ├── seaformer_attention_multiscale.py
+        └── seaformer_attention_lepe.py
+```
+
+自定义脚本请使用 `from segmentation.models.network import main_network` 或
+`from segmentation.models import build_model`。原 checkpoint 的 state_dict 键名保持一致，
+可继续通过 `load_checkpoint.py` 和训练器加载。
