@@ -24,6 +24,11 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import IterableDataset
+from segmentation.models.seaformer_attention import SeaAttention as OriginalAttention
+from segmentation.models.seaformer_attention_multiscale import SeaAttention as MultiScaleAttention
+from segmentation.models.seaformer_attention_lepe import SeaAttention as LePEAttention
+
+ATTENTION_TYPES = (OriginalAttention, MultiScaleAttention, LePEAttention)
 
 
 @contextmanager
@@ -104,6 +109,7 @@ def profile_model(
     rows = []
     handles = []
     feature_shapes = []
+    head_input_shapes = []
 
     states = {
         module: module.training
@@ -133,6 +139,9 @@ def profile_model(
 
         elif isinstance(layer, nn.Linear):
             linear_macs = output.numel() * layer.in_features
+        elif isinstance(layer, ATTENTION_TYPES):
+            b, _, h, w = args[0].shape
+            attention_macs = b * layer.num_heads * (layer.key_dim + layer.value_dim) * (h*h + w*w)
         elif getattr(layer, "macs_kind", None) == "attention_macs":
             attention_macs = layer.count_macs(args, output)
 
@@ -165,9 +174,13 @@ def profile_model(
             list(value.shape) for value in values
         )
 
+    def record_head_inputs(module, args):
+        values = [args[0]] if isinstance(args[0], torch.Tensor) else args[0]
+        head_input_shapes.extend(list(value.shape) for value in values)
+
     try:
         for name, layer in model.named_modules():
-            if (isinstance(layer, (nn.Conv2d, nn.Linear))
+            if (isinstance(layer, (nn.Conv2d, nn.Linear, *ATTENTION_TYPES))
                     or getattr(layer, "macs_kind", None) == "attention_macs"):
                 handles.append(
                     layer.register_forward_hook(
@@ -181,6 +194,7 @@ def profile_model(
                 record_features
             )
         )
+        handles.append(model.decode_head.register_forward_pre_hook(record_head_inputs))
 
         # 避免统计时更新 BatchNorm 或启用 Dropout。
         model.eval()
@@ -240,6 +254,7 @@ def profile_model(
         "input_shape": list(inputs.shape),
         "output_shape": list(output.shape),
         "backbone_feature_shapes": feature_shapes,
+        "head_input_shapes": head_input_shapes,
         "components": parts,
         **parts["total"],
         "head_parameters": parts["decode_head"]["parameters"],
@@ -258,8 +273,8 @@ def print_profile(report: dict) -> None:
         flush=True,
     )
     print(
-        "CNN output/head input："
-        f"{report['backbone_feature_shapes']}",
+        f"CNN outputs: {report['backbone_feature_shapes']}\n"
+        f"Actual head inputs: {report['head_input_shapes']}",
         flush=True,
     )
     print(

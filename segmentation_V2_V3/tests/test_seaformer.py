@@ -10,7 +10,8 @@ from PIL import Image
 import pytest
 import torch
 from torch.nn import functional as F
-from torchvision.models import mobilenet_v2
+import importlib
+from test_v2_backbone import reference_modules
 
 from profile_model import profile_model
 from segmentation import Config, run_experiment
@@ -18,7 +19,7 @@ from segmentation.config import prepare_config
 from segmentation.freezing import configure_trainable, set_training_mode
 from segmentation.models import build_model
 from segmentation.models.mobile_v3_head import MobileV3C3Head, MobileV3FPNHead
-from segmentation.models.seaformer_attention import SeaAttention
+from segmentation.models.legacy_seaformer_attention import SeaAttention
 from segmentation.models.seaformer_stem import stem_block
 
 
@@ -31,16 +32,13 @@ def cpu_threads():
 
 
 def test_stem_is_original_mobilenet_prefix():
-    torch.manual_seed(7)
-    original = mobilenet_v2(weights=None)
-    original.features[7].conv[1][0].stride = (1, 1)
-    original = original.features[:8].eval()
-    torch.manual_seed(7)
+    reference_modules()
+    reference_stem = importlib.import_module('_reference_v2.models.Stem_block').stem_block
+    original = reference_stem(pretrained=False).backbone.eval()
     stem = stem_block(pretrained=False).eval()
     assert stem.backbone[7].conv[1][0].stride == (1, 1)
     assert original.state_dict().keys() == stem.backbone.state_dict().keys()
-    for name, value in original.state_dict().items():
-        torch.testing.assert_close(value, stem.backbone.state_dict()[name], rtol=0, atol=0)
+    stem.backbone.load_state_dict(original.state_dict(), strict=True)
     images = torch.randn(2, 3, 65, 97)
     with torch.no_grad():
         torch.testing.assert_close(original(images), stem(images), rtol=0, atol=0)
@@ -147,8 +145,8 @@ def test_pretrain_head_and_actual_checkpoint_resume(tmp_path, capsys):
     assert report["attention_macs"] > 0
     pretrain = Path(cfg.output_dir)
     exported = torch.load(pretrain / "backbone_last.pth", weights_only=True)
-    assert exported["out_channels"] == (128,)
-    assert exported["architecture"] == "SeaFormerSingleFusion_v1"
+    assert exported["out_channels"] == (64, 64, 64)
+    assert exported["architecture"] == "UploadedMobileV2SeaFormer_v1"
     head_cfg = replace(cfg, mode="head", backbone_checkpoint=str(pretrain / "backbone_last.pth"),
                        output_dir=str(tmp_path / "head"))
     head_report = run_experiment(head_cfg)
@@ -173,7 +171,7 @@ def test_pretrain_head_and_actual_checkpoint_resume(tmp_path, capsys):
         torch.testing.assert_close(restored["model"][name], value, rtol=0, atol=0)
 
     with pytest.raises(ValueError, match="seaformer_depths"):
-        run_experiment(replace(resume_cfg, seaformer_depths=(2, 2, 2)))
+        run_experiment(replace(resume_cfg, seaformer_depths=(1, 2, 2)))
 
 
 def test_seaformer_never_selects_another_head():

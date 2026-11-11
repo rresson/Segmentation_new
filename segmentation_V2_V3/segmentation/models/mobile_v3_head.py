@@ -193,3 +193,19 @@ class MobileV3C3Head(nn.Module):
         if isinstance(features, Tensor) or len(features) != 1:
             raise ValueError("MobileV3C3Head requires exactly one C3 feature map")
         return self.classifier(self.refine(self.lateral(self.context(features[0]))))
+
+
+class MobileV2C3Head(MobileV3C3Head):
+    """V2 的最终 fusion 特征经 head 内适配后进入原 MobileV3 C3 路径。"""
+    def __init__(self, num_classes=150, width=128):
+        super().__init__(128, num_classes, width)
+        self.input_projection = nn.Sequential(
+            nn.Conv2d(64, 64, 3, stride=2, padding=1, groups=64, bias=False),
+            nn.BatchNorm2d(64), nn.ReLU6(inplace=True),
+            nn.Conv2d(64, 128, 1, bias=False), nn.BatchNorm2d(128),
+        )
+
+    def forward(self, features):
+        if isinstance(features, Tensor) or len(features) != 1:
+            raise ValueError("MobileV2C3Head requires exactly one feature map")
+        return super().forward([self.input_projection(features[0])])

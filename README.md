@@ -1,16 +1,10 @@
-# Segmentation_new
+# 分割实验工程
 
-默认模型为 **原始 MobileNetV2 stem + 优化 SeaFormer backbone + MobileV3FPNHead 的 C3 单路分割头**。
+两个独立工程并列存放，运行命令前进入对应目录：
 
-完整结构、安装、两阶段训练、断点恢复及实测统计见 [SEA_FORMER.md](SEA_FORMER.md)。
+| 工程 | Backbone | 分割头 |
+| --- | --- | --- |
+| [segmentation_V2](segmentation_V2/README.md) | 上传的 MobileNetV2 stem + 六个 context block + 三次 fusion | 上传的原始分割头，可选辅助头 |
+| [segmentation_V2_V3](segmentation_V2_V3/README.md) | 与 V2 相同的 backbone | MobileV3FPNHead 的 C3 单路，head 内做接口适配 |
 
-```bash
-python main.py --mode pretrain --data-root /path/to/ADEChallengeData2016
-python main.py --mode head --data-root /path/to/ADEChallengeData2016
-python profile_model.py --mode head --size 256
-python -m pytest -q tests
-```
-
-先完成新 backbone 的预训练，再冻结 backbone 训练 head。仅有 stem 的 ImageNet 权重不足以把整个新 backbone 当作已训练模型。
-
-`instruction.md` 是旧 SmallCNN/FPN 的配置说明；当前 SeaFormer 使用 `SEA_FORMER.md`。
+两个工程均使用名为 `segmentation` 的包，请分别在各自目录运行，不要混用 PYTHONPATH。

@@ -16,7 +16,7 @@ class Config:
     mode: Literal["pretrain", "head", "custom"] = "custom"
 
     data_root: str = "ADEChallengeData2016"
-    output_root: str = "runs/ade20k_seaformer"
+    output_root: str = "runs/ade20k_v2_v3"
     output_dir: str = ""
 
     # 空路径：新实验，stem 默认 ImageNet 初始化，其他模块随机初始化。
@@ -41,7 +41,7 @@ class Config:
 
     stem_pretrained: bool = True
     seaformer_attention: Literal["original", "multiscale", "lepe"] = "multiscale"
-    seaformer_depths: tuple[int, int, int] = (1, 2, 2)
+    seaformer_depths: tuple[int, int, int] = (2, 2, 2)
     seaformer_learnable_squeeze: bool = False
 
     # 控制 FPN 融合通道，必须为 8 的倍数。
@@ -132,9 +132,8 @@ def prepare_config(config: Config) -> Config:
             raise ValueError("SeaFormer requires head_name='mobile_c3' (C3 only)")
         if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
             raise ValueError("Unknown seaformer_attention")
-        if (len(cfg.seaformer_depths) != 3
-                or any(type(d) is not int or d < 1 for d in cfg.seaformer_depths)):
-            raise ValueError("seaformer_depths requires three positive integers")
+        if tuple(cfg.seaformer_depths) != (2, 2, 2):
+            raise ValueError("seaformer_depths must be (2, 2, 2) to match segmentation_V2")
     elif cfg.head_name == "mobile_c3":
         raise ValueError("mobile_c3 expects the SeaFormer single-output backbone")
 

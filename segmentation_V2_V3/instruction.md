@@ -1,3 +1,5 @@
+> 历史设计资料：本文件保留迁移前内容。当前实现与验证结果请以 README.md 为准。
+
 # ADE20K：分割头与指定 CNN 层联合训练配置说明
 
 适用工程：当前 `ade20k_modular`，默认网络为 `SmallCNNBackbone + FPNHead`。

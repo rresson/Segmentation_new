@@ -1,3 +1,5 @@
+> 历史设计资料：本文件保留迁移前内容。当前实现与验证结果请以 README.md 为准。
+
 # SeaFormer + MobileV3 C3 单路头
 
 本实现使用用户确认的 `MobileV3FPNHead`，仅保留 **C3 context → lateral[2] → refine[2] → classifier**。默认 150 类、head_width=128。没有 C1/C2 分割分支、多尺度 top-down/cat/fuse、原上传 segment_block 或辅助分割头。

@@ -9,6 +9,7 @@ import torch
 
 from .config import Config
 from .models.segmentor import Segmentor
+from .models.seaformer import backbone_network_config
 
 
 def atomic_save(
@@ -25,7 +26,7 @@ def architecture_name(cfg: Config) -> str:
         "small_cnn": "SmallCNNBackbone_v1",
         "demo": "DemoBackbone_v1",
         "mobile_v3": "MobileV3Backbone_v1",
-        "seaformer": "SeaFormerSingleFusion_v1",
+        "seaformer": "UploadedMobileV2SeaFormer_v1",
     }[cfg.backbone_name]
 
 
@@ -44,6 +45,7 @@ def export_backbone(
             "architecture": architecture_name(cfg),
             "out_channels": tuple(model.backbone.out_channels),
             **({
+                "network_config": backbone_network_config(cfg.seaformer_attention, cfg.seaformer_learnable_squeeze),
                 "seaformer_attention": cfg.seaformer_attention,
                 "seaformer_depths": cfg.seaformer_depths,
                 "seaformer_learnable_squeeze": cfg.seaformer_learnable_squeeze,
@@ -106,11 +108,25 @@ def load_backbone(
 
     if (
         "backbone_name" in metadata
-        and metadata["backbone_name"] != cfg.backbone_name
+        and metadata["backbone_name"] not in (
+            (cfg.backbone_name, "uploaded_mobile_v2") if cfg.backbone_name == "seaformer"
+            else (cfg.backbone_name,)
+        )
     ):
         raise ValueError(
             "checkpoint backbone_name does not match current model"
         )
+
+    if cfg.backbone_name == "seaformer":
+        network = checkpoint.get("network_config", checkpoint.get("model_config", {}))
+        if metadata.get("backbone_name") == "uploaded_mobile_v2":
+            network = metadata
+        expected = backbone_network_config(cfg.seaformer_attention, cfg.seaformer_learnable_squeeze)
+        for key in ("dim", "key_dim", "num_heads", "attn_ratio", "pos_shape",
+                    "use_learnable_squeeze", "ffn_ratio", "expansion_ratio1", "expansion_ratio2",
+                    "attention_type", "fusion_type"):
+            if key in network and network[key] != expected[key]:
+                raise ValueError(f"CNN checkpoint {key} differs from current model")
 
     for key in ("mean", "std"):
         if (
@@ -123,7 +139,7 @@ def load_backbone(
 
     state = checkpoint.get(
         "state_dict",
-        checkpoint.get("model", checkpoint),
+        checkpoint.get("model", checkpoint.get("model_state_dict", checkpoint)),
     )
 
     state = {
@@ -139,6 +155,9 @@ def load_backbone(
             for name, value in state.items()
             if name.startswith(prefix)
         }
+    elif any(name.startswith("backbone.") for name in state):
+        state = {name.removeprefix("backbone."): value for name, value in state.items()
+                 if name.startswith("backbone.")}
 
     if not state:
         raise ValueError(
