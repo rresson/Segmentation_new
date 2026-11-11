@@ -7,10 +7,12 @@
 ```bash
 cd segmentation_V2
 python -m pip install -r requirements-dev.txt
-python pipeline.py
+python main.py
 ```
 
-在 `segmentation/config.py` 设置 `data_root`、训练轮数和数据/模型参数，也可用命令行覆盖。默认训练数据限制为 1000 张、验证 200 张；完整数据集训练可将 `max_train_samples`、`max_val_samples` 设为 0。相对路径统一从 `segmentation_V2` 工程目录解析，PyCharm 可直接运行 `pipeline.py`。
+在 `segmentation/config.py` 设置 `data_root`、训练轮数和数据/模型参数，也可用命令行覆盖。默认训练数据限制为 1000 张、验证 200 张；完整数据集训练可将 `max_train_samples`、`max_val_samples` 设为 0。相对路径统一从 `segmentation_V2` 工程目录解析，PyCharm 可直接运行 `main.py`。
+
+`main.py` 默认启动 pipeline。旧的 `python pipeline.py` 入口仍可使用，两者共享菜单和参数解析。指定 `--mode` 或 `--resume` 时，`main.py` 才进入单阶段训练；不要与 pipeline 的 `--choice` 等选项混用。
 
 程序提供三个选项：
 
@@ -25,13 +27,13 @@ python pipeline.py
 ### 选项 1：同一 run 内完成两个阶段
 
 ```bash
-python pipeline.py --choice 1 --data-root /path/to/ADEChallengeData2016
+python main.py --choice 1 --data-root /path/to/ADEChallengeData2016
 ```
 
 默认两个阶段各使用 `Config.epochs`。可分别设置：
 
 ```bash
-python pipeline.py --choice 1 --pretrain-epochs 50 --head-epochs 20
+python main.py --choice 1 --pretrain-epochs 50 --head-epochs 20
 ```
 
 第一阶段结束后，只读取它实际输出目录中的 `backbone_best_miou.pth`；第二阶段保存到该实验的 `head1`。第一阶段失败或没有生成该权重时，head 阶段不会启动。
@@ -39,7 +41,7 @@ python pipeline.py --choice 1 --pretrain-epochs 50 --head-epochs 20
 ### 选项 2：再次调用同一 backbone
 
 ```bash
-python pipeline.py --choice 2 --checkpoint runs/ade20k/run1/pretrain/backbone_best_miou.pth
+python main.py --choice 2 --checkpoint runs/ade20k/run1/pretrain/backbone_best_miou.pth
 ```
 
 如 `run1/head1` 已存在，这次创建 `run1/head2`，下次创建 `run1/head3`。编号来自磁盘，关闭程序再启动、切换工作目录后都能保持同一归属。历史的 `head`、`head_2` 命名也会计入编号；创建目录时原子占用，避免并发覆盖。
@@ -49,7 +51,7 @@ python pipeline.py --choice 2 --checkpoint runs/ade20k/run1/pretrain/backbone_be
 ### 选项 3：固定已训练 head，只训练 backbone
 
 ```bash
-python pipeline.py --choice 3 --checkpoint runs/ade20k/run1/pretrain/backbone_best_miou.pth
+python main.py --choice 3 --checkpoint runs/ade20k/run1/pretrain/backbone_best_miou.pth
 ```
 
 分割任务仍需通过 head 计算损失。此模式会读取同目录的配套 `best_miou.pth`，验证其中的 backbone 与所选导出文件完全匹配，再冻结 head 参数、BatchNorm buffers 和 Dropout，只更新 backbone。
@@ -85,7 +87,7 @@ runs/ade20k/
 
 ## 原始单阶段入口与续训
 
-`main.py` 继续支持 `pretrain/head/custom`。custom 的训练范围由 `Config.trainable_prefixes` 决定；pipeline 选项 3 会明确设置为 `("backbone",)`。
+`main.py --mode pretrain/head/custom` 显式选择单阶段训练；不带这些选项时显示 pipeline 菜单。custom 的训练范围由 `Config.trainable_prefixes` 决定；pipeline 选项 3 会明确设置为 `("backbone",)`。
 
 ```bash
 python main.py --mode head --model-checkpoint runs/ade20k/run1/pretrain/best_miou.pth --run-name run1
@@ -134,8 +136,9 @@ python -m pytest -q tests
 ## 相关代码
 
 ```text
-pipeline.py                    交互菜单与命令行入口
-main.py                        原单阶段入口及公共参数
+main.py                        默认 pipeline；--mode/--resume 单阶段训练
+pipeline.py                    独立 pipeline 兼容入口
+segmentation/cli.py            两个入口共享的菜单与命令行解析
 segmentation/pipeline.py       三种流程、checkpoint 配对及归属
 segmentation/run_paths.py      run/head 编号与续训目录
 segmentation/config.py         网络、训练和路径配置

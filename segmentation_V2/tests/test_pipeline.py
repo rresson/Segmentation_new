@@ -82,11 +82,12 @@ def test_all_three_choices_keep_lineage_and_exact_frozen_states(tmp_path):
     assert_frozen_backbone(updated_source, root / 'run2/head1')
 
 
-def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path):
+@pytest.mark.parametrize('entrypoint', ['main.py', 'pipeline.py'])
+def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entrypoint):
     cfg = small_config(tmp_path)
     project = Path(__file__).resolve().parents[1]
     root = tmp_path / 'runs with spaces'
-    common = [sys.executable, str(project / 'pipeline.py'), '--data-root', cfg.data_root,
+    common = [sys.executable, str(project / entrypoint), '--data-root', cfg.data_root,
               '--output-root', str(root), '--epochs', '1', '--batch-size', '2',
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
               '--device', 'cpu', '--no-pretrained-stem']
@@ -105,6 +106,65 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path):
     assert not (root / 'run2').exists()
     assert_frozen_backbone(source, root / 'run1/head2')
     assert second.stdout.count('pre-training detection:') == 1
+
+    # 非交互命令也从同一入口进入 pipeline；custom 仅更新 backbone。
+    third = subprocess.run(common + ['--choice', '3', '--checkpoint', str(source)],
+                           text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert '请选择' not in third.stdout
+    custom = root / 'run2/custom'
+    initial = torch.load(source.with_name('best_miou.pth'), weights_only=True)['model']
+    trained = torch.load(custom / 'last.pth', weights_only=True)
+    assert all(name.startswith('backbone.') for name in trained['trainable_names'])
+    for name, value in initial.items():
+        if name.startswith('decode_head.'):
+            torch.testing.assert_close(value, trained['model'][name], rtol=0, atol=0)
+    assert json.loads((custom / 'pipeline.json').read_text())['choice'] == 3
+
+
+def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
+    cfg = small_config(tmp_path)
+    project = Path(__file__).resolve().parents[1]
+    root = tmp_path / 'single stage runs'
+    common = [sys.executable, str(project / 'main.py'), '--data-root', cfg.data_root,
+              '--output-root', str(root), '--epochs', '2', '--batch-size', '2',
+              '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
+              '--device', 'cpu', '--no-pretrained-stem']
+    env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
+    first = subprocess.run(common + ['--mode=pretrain'], stdin=subprocess.DEVNULL,
+                           text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
+    assert first.returncode == 0, first.stdout + first.stderr
+    output = root / 'run1/pretrain'
+    assert '请选择' not in first.stdout
+    assert not (output / 'pipeline.json').exists()
+    assert not (root / 'run1/head1').exists()
+    # 已完成 checkpoint 的续训应直接恢复原目录，不再弹出菜单或创建 run2。
+    before = (output / 'history.csv').read_bytes()
+    resumed = subprocess.run(common + ['--resume', str(output / 'last.pth')],
+                             stdin=subprocess.DEVNULL, text=True, capture_output=True,
+                             cwd=tmp_path, env=env, timeout=120)
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    assert '请选择' not in resumed.stdout
+    assert '恢复第 2 轮' in resumed.stdout
+    assert before == (output / 'history.csv').read_bytes()
+    assert not (root / 'run2').exists()
+
+
+@pytest.mark.parametrize('arguments', [
+    ['--mode', 'pretrain', '--choice', '1'],
+    ['--resume', 'missing.pth', '--head-epochs', '2'],
+    ['--backbone-checkpoint', 'missing.pth'],
+    ['--choice', '2'],
+])
+def test_main_rejects_ambiguous_or_incomplete_cli_before_training(tmp_path, arguments):
+    project = Path(__file__).resolve().parents[1]
+    output = tmp_path / 'runs'
+    result = subprocess.run([sys.executable, str(project / 'main.py'),
+                             '--output-root', str(output), *arguments],
+                            stdin=subprocess.DEVNULL, text=True, capture_output=True,
+                            cwd=tmp_path, timeout=30)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not output.exists()
 
 
 def test_external_checkpoint_binding_is_persistent_and_concurrent(tmp_path):
