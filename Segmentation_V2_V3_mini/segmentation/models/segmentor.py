@@ -31,5 +31,6 @@ def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmento
     return Segmentor(
         SeaFormerBackbone(pretrained_stem=bool(initialize_stem), attention=cfg.seaformer_attention,
                           depths=cfg.seaformer_depths, use_learnable_squeeze=cfg.seaformer_learnable_squeeze),
-        MiniC3Head(num_classes=cfg.num_classes, expanded_channels=cfg.context_expanded_channels),
+        MiniC3Head(num_classes=cfg.num_classes, expanded_channels=cfg.context_expanded_channels,
+                   width=cfg.head_width),
     )

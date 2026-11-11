@@ -129,7 +129,8 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
     common = [sys.executable, str(project / 'main.py'), '--data-root', cfg.data_root,
               '--output-root', str(root), '--epochs', '2', '--batch-size', '2',
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
-              '--device', 'cpu', '--no-pretrained-stem']
+              '--device', 'cpu', '--no-pretrained-stem',
+              '--seaformer-attention', 'multiscale', '--no-learnable-squeeze']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
     first = subprocess.run(common + ['--mode=pretrain'], stdin=subprocess.DEVNULL,
                            text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)

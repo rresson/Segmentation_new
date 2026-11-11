@@ -18,6 +18,8 @@ def add_config_arguments(parser, *, single_stage=True):
                  "val-max-side", "max-train-samples", "max-val-samples"):
         parser.add_argument(f"--{name}", type=int)
     parser.add_argument("--seaformer-attention", choices=("original", "multiscale", "lepe"))
+    parser.add_argument("--learnable-squeeze", dest="seaformer_learnable_squeeze",
+                        action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--pretrained-stem", dest="stem_pretrained",
                         action=argparse.BooleanOptionalAction, default=None)
 

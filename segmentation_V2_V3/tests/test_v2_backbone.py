@@ -41,8 +41,8 @@ def test_adapted_head_keeps_original_c3_computation_and_backbone_cost():
         torch.testing.assert_close(head([x]), expected, rtol=0, atol=0)
     model = build_model(Config(stem_pretrained=False)).eval()
     report = profile_model(model, torch.zeros(1, 3, 256, 256))
-    assert report['components']['backbone']['parameters'] == 947712
-    assert report['components']['backbone']['total_counted_macs'] == 434700288
+    assert report['components']['backbone']['parameters'] == 757860
+    assert report['components']['backbone']['total_counted_macs'] == 385425408
     assert report['head_input_shapes'] == [[1, 64, 32, 32]]
     assert len(report['backbone_feature_shapes']) == 4
 
@@ -84,3 +84,15 @@ def test_same_backbone_features_weights_and_cross_project_checkpoints(tmp_path, 
     checkpoints.load_backbone(reference, reference_cfg)
     for name, value in actual.backbone.state_dict().items():
         torch.testing.assert_close(value, reference.backbone.state_dict()[name], rtol=0, atol=0)
+
+def test_defaults_match_latest_v2_backbone_config():
+    from segmentation.models.seaformer import backbone_network_config
+    source_config, _, _ = reference_modules()
+    expected = source_config.network_kwargs(source_config.Config())
+    actual = backbone_network_config()
+    cfg = Config()
+    assert cfg.seaformer_attention == expected['attention_type'] == 'original'
+    assert cfg.seaformer_learnable_squeeze == expected['use_learnable_squeeze'] is True
+    for key in ('dim', 'key_dim', 'num_heads', 'attn_ratio', 'pos_shape', 'use_learnable_squeeze',
+                'ffn_ratio', 'expansion_ratio1', 'expansion_ratio2', 'attention_type', 'fusion_type'):
+        assert actual[key] == expected[key], key

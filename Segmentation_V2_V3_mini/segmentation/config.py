@@ -1,4 +1,4 @@
-"""Segmentation_V2_V3_mini：相同 V2 backbone + 单个 64→120→64 IR/SE C3 head。"""
+"""Segmentation_V2_V3_mini：相同 V2 backbone + 单个 128→368→128 IR/SE C3 head。"""
 
 from __future__ import annotations
 
@@ -30,15 +30,15 @@ class Config:
 
     backbone_name: Literal["seaformer"] = "seaformer"
     head_name: Literal["mobile_c3_mini"] = "mobile_c3_mini"
-    context_expanded_channels: int = 120  # PW expansion；默认配置全网 998,278 Params。
+    context_expanded_channels: int = 368  # PW expansion；默认配置全网 997,178 Params。
 
     stem_pretrained: bool = True
-    seaformer_attention: Literal["original", "multiscale", "lepe"] = "multiscale"
+    seaformer_attention: Literal["original", "multiscale", "lepe"] = "original"
     seaformer_depths: tuple[int, int, int] = (2, 2, 2)
-    seaformer_learnable_squeeze: bool = False
+    seaformer_learnable_squeeze: bool = True
 
-    # mini head 的主通道固定为 64；仅 C3 一路。
-    head_width: int = 64
+    # C3 单路；context、lateral/refine 与 classifier 输入共用此宽度。
+    head_width: int = 128
 
     trainable_prefixes: tuple[str, ...] = (
         "backbone",
@@ -78,11 +78,12 @@ class Config:
 def validate_model_config(cfg: Config) -> None:
     if cfg.backbone_name != "seaformer" or cfg.head_name != "mobile_c3_mini":
         raise ValueError("Mini requires backbone_name='seaformer' and head_name='mobile_c3_mini'")
-    if cfg.head_width != 64:
-        raise ValueError("Mini head_width is fixed at 64")
+    width = cfg.head_width
+    if not isinstance(width, int) or isinstance(width, bool) or width < 8 or width % 8:
+        raise ValueError("head_width must be a positive integer divisible by 8")
     expanded = cfg.context_expanded_channels
-    if not isinstance(expanded, int) or isinstance(expanded, bool) or expanded <= 64 or expanded % 8:
-        raise ValueError("context_expanded_channels must be an integer >64 and divisible by 8")
+    if not isinstance(expanded, int) or isinstance(expanded, bool) or expanded <= width or expanded % 8:
+        raise ValueError("context_expanded_channels must be an integer >head_width and divisible by 8")
     if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
         raise ValueError("Unknown seaformer_attention")
     if tuple(cfg.seaformer_depths) != (2, 2, 2):

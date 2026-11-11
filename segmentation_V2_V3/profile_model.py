@@ -409,9 +409,15 @@ def main() -> None:
         type=Path,
         help="JSON output available",
     )
+    parser.add_argument("--seaformer-attention", choices=("original", "multiscale", "lepe"))
+    parser.add_argument("--learnable-squeeze", dest="seaformer_learnable_squeeze",
+                        action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
 
     config = Config()
+    for key in ("seaformer_attention", "seaformer_learnable_squeeze"):
+        if getattr(args, key) is not None:
+            setattr(config, key, getattr(args, key))
     if args.mode is not None:
         config.mode = args.mode
     cfg = prepare_config(config)

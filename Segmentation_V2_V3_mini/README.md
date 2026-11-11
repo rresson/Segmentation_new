@@ -1,22 +1,22 @@
 # Segmentation_V2_V3_mini
 
-独立的 mini 训练工程，与 `segmentation_V2`、`segmentation_V2_V3` 并列。默认模型为已核验的 **一个 64→120→64 IR＋SE context、C3 单路 head**，全网 **998,278 Params**。
+独立的 mini 训练工程，与 `segmentation_V2`、`segmentation_V2_V3` 并列。默认模型为已核验的 **一个 128→368→128 IR＋SE context、C3 单路 head**，全网 **997,178 Params**。
 
 ## 模型
 
 - Backbone 与另外两个工程的相同配置一致：原始 MobileNetV2 stem、六个 SeaFormer context block、三次 enhanced fusion。
 - 仅把最终 fusion 的 f3 送入 head，不建立 C1/C2 分支。
-- Head 主通道固定 64；context 数量固定 1，DW5×5、SE120→32→120、线性投影和残差连接均保留。
-- 输入适配为 DW3×3 stride2 + PW64→64；后接 context、lateral64、SepConv64、classifier150。输出步长 16。
+- Head 默认主通道 128；context 数量固定 1，DW5×5、SE368→96→368、线性投影和残差连接均保留。
+- 输入适配为 DW3×3 stride2 + PW64→128；后接 context、lateral128、SepConv128、classifier150。输出步长 16。
 - 图像读取与增强使用 Pillow/NumPy/PyTorch，不依赖 torchvision。
 
-默认 `multiscale` attention、`seaformer_learnable_squeeze=False`、150 类，输入 `[1,3,256,256]`：
+默认与 V2 提交 `b8036a4` 一致的 `original` attention、`seaformer_learnable_squeeze=True`、150 类，输入 `[1,3,256,256]`：
 
 | 部分 | Params | MACs/图 |
 | --- | ---: | ---: |
-| backbone | 947,712 | 434,700,288 |
-| mini head | 50,566 | 10,606,080 |
-| **全网** | **998,278** | **445,306,368** |
+| backbone | 757,860 | 385,425,408 |
+| mini head | 239,318 | 42,386,432 |
+| **全网** | **997,178** | **427,811,840** |
 
 Params 包含冻结参数和归一化仿射参数，不包含 buffers。MACs 计卷积、线性和 attention QKᵀ/AV；不计插值、归一化、池化、逐元素运算、loss 和反向。
 
@@ -97,7 +97,7 @@ python main.py --choice 2 --checkpoint ../segmentation_V2_V3/runs/ade20k_v2_v3/r
 backbone 结构与预处理配置相同即可严格加载；attention 类型或 learnable squeeze 不同会明确拒绝。
 旧工程的完整模型也可作为选项 2 的来源，只提取 backbone。
 
-**旧版完整 head 不能作为 mini 的完整模型初始化、续训或选项 3 的冻结 head。** 请先用旧 backbone 训练 mini head，再使用产生的完整 mini checkpoint。Mini checkpoint 保存独立的 `head_name="mobile_c3_mini"` 和 `context_expanded_channels`，加载与续训均校验这些字段。
+**旧版完整 head 不能作为 mini 的完整模型初始化、续训或选项 3 的冻结 head。** 请先用旧 backbone 训练 mini head，再使用产生的完整 mini checkpoint。Mini checkpoint 保存 `head_name="mobile_c3_mini"`、`head_width` 和 `context_expanded_channels`，完整加载与续训均校验这些字段。
 
 ## 单阶段和续训
 
@@ -113,27 +113,42 @@ python main.py --mode custom --trainable-prefixes backbone --resume runs/ade20k_
 续训从原 checkpoint 目录继续，不创建新编号；保持原来的训练范围、数据、网络、总轮数和超参数。旧实验已完成时不会重复 epoch。
 显式 `output_dir` 已存在时，新实验自动追加 `_2`、`_3`；指定 resume 时则恢复原目录。
 
-## 扩展宽度配置
+## Head 参数预算与配置
 
-默认 `context_expanded_channels=120`，也可比较 96、112 等宽度：
+默认 `head_width=128`、`context_expanded_channels=368`。一个 IR 的路径为 128→368→128；head 主干、lateral、refine 与 classifier 的输入宽度一起由 `head_width` 控制。SE 中间通道按原规则向上对齐为 96。
 
 ```bash
-python main.py --choice 1 --context-expanded-channels 112
-python main.py --mode head --context-expanded-channels 112 --resume runs/ade20k_v2_v3_mini/run1/head1/last.pth
-python profile_model.py --size 256 --mode head --context-expanded-channels 112
+python main.py --choice 1 --head-width 128 --context-expanded-channels 368
+python profile_model.py --size 256 --mode head --head-width 128 --context-expanded-channels 368
 ```
 
-只允许大于 64 且为 8 的倍数，保留真实的 PW 扩展。head 主通道固定 64。
-改变扩展宽度是新模型实验，不能当作旧完整 checkpoint 的续训；同一个 backbone 仍可复用。
+主通道须为正整数且为 8 的倍数；扩展通道须大于主通道且为 8 的倍数，保留真实 PW 扩展。改变任一宽度需新建 head 实验，不能直接续训不同尺寸的完整 head。同配置的 backbone 可以复用。
 
-| 扩展通道 | 默认 backbone 下全网 Params |
-| --- | ---: |
-| 96 | 991,406 |
-| 112 | 996,502 |
-| 120 | 998,278 |
-| 128 | 1,000,054 |
+当前 757,860 Params backbone、150 类下的实测比较：
 
-只有上述默认配置保证 998,278；增加扩展宽度、开启 learnable squeeze 或改变模型设置，可能超过 1M。启动前的统计会报告实际值。
+| 主通道 / 扩展通道 | Head Params | 全网 Params | 全网 MACs/图（256²） |
+| --- | ---: | ---: | ---: |
+| 64 / 120（原 mini head） | 50,566 | 808,426 | 396,031,488 |
+| 64 / 512 | 235,990 | 993,850 | 411,508,736 |
+| 96 / 448 | 241,478 | 999,338 | 420,759,552 |
+| 128 / 352 | 226,030 | 983,890 | 426,652,160 |
+| **128 / 368（默认）** | **239,318** | **997,178** | **427,811,840** |
+| 128 / 376（超预算） | 243,142 | 1,001,002 | 428,388,864 |
+
+选择 128/368 是为了同时增加 context、空间特征细化与分类层的容量。它是预算内的工程选择，尚无 ADE20K mIoU 证据证明它优于表中其他结构。完整参数推导见 [HEAD_BUDGET.md](HEAD_BUDGET.md)。
+
+只有上述默认设置保证全网小于 1M。更换 backbone attention/squeeze 或继续增加宽度需重新统计；程序允许超预算实验并报告实际值。
+
+### 旧配置兼容
+
+原 mini 的默认值是 W64/E120、multiscale attention、不使用 learnable squeeze。旧完整 checkpoint 的训练和续训需显式恢复这些设置（并保持原训练超参数）：
+
+```bash
+python main.py --mode head --resume /path/to/old/head1/last.pth --head-width 64 --context-expanded-channels 120 --seaformer-attention multiscale --no-learnable-squeeze
+python profile_model.py --size 256 --head-width 64 --context-expanded-channels 120 --seaformer-attention multiscale --no-learnable-squeeze
+```
+
+第二条命令仍统计为 998,278 Params / 445,306,368 MACs。仅复用旧 backbone 时可独立选择新 head 宽度，但仍须匹配来源 backbone 的 attention/squeeze；该组合未必低于 1M。推理入口从完整 checkpoint 读取两种宽度和 backbone 设置，不需要手动转换权重。
 
 ## 独立统计与推理
 
@@ -142,7 +157,7 @@ python profile_model.py --size 256 --mode head --output model_profile.json
 python load_checkpoint.py runs/ade20k_v2_v3_mini/run1/head1/best_miou.pth --image /path/to/image.jpg --output prediction.png
 ```
 
-推理从 checkpoint 恢复扩展通道与网络配置，无需手动重新填写 E。输出 PNG 为 0..149 类别索引，不是彩色可视化标签。
+推理从 checkpoint 恢复主通道、扩展通道与网络配置，无需手动重新填写宽度。输出 PNG 为 0..149 类别索引，不是彩色可视化标签。
 
 ## 验证与目录
 

@@ -43,9 +43,9 @@ class Config:
     ] = "mobile_c3"
 
     stem_pretrained: bool = True
-    seaformer_attention: Literal["original", "multiscale", "lepe"] = "multiscale"
+    seaformer_attention: Literal["original", "multiscale", "lepe"] = "original"
     seaformer_depths: tuple[int, int, int] = (2, 2, 2)
-    seaformer_learnable_squeeze: bool = False
+    seaformer_learnable_squeeze: bool = True
 
     # 控制 FPN 融合通道，必须为 8 的倍数。
     head_width: int = 128

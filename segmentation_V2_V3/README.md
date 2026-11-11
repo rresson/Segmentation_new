@@ -1,6 +1,6 @@
 # MobileNetV2 backbone + MobileV3FPNHead C3 单路
 
-本目录由原仓库根目录工程迁入，与 `segmentation_V2` 并列。根目录 README 提供两套工程入口。请在本目录运行命令，避免两个同名 `segmentation` 包混用。
+本目录由原仓库根目录工程迁入，与 `segmentation_V2` 并列。根目录 README 提供三套工程入口。请在本目录运行命令，避免同名 `segmentation` 包混用。
 
 ## 本次核对和修正
 
@@ -12,7 +12,7 @@
 - 三个 context stage，每个包含两个 block；两次 context downscaling。
 - fusion1、fusion2、fusion3 按原 V2 前向顺序全部执行。
 - 原 attention/fusion/network/stem 源文件与 V2 对应文件一致，返回 `(f1,f2,f3,c2)`。
-- 默认 enhanced fusion；dim=64、key_dim=16、num_heads=4、attn_ratio=2、pos_shape=16、ffn_ratio=2、expansion_ratio=2。与 V2 比较时需使用相同 attention 与 learnable squeeze 配置。
+- 默认与 V2 提交 `b8036a4` 对齐：`seaformer_attention="original"`、`seaformer_learnable_squeeze=True`、enhanced fusion；dim=64、key_dim=16、num_heads=4、attn_ratio=2、pos_shape=16、ffn_ratio=2、expansion_ratio=2。与 V2 比较时需使用相同 attention 与 learnable squeeze 配置。
 
 `seaformer_depths` 固定 `(2,2,2)`，避免误切回此前优化结构。其他遗留 demo/small_cnn/mobile_v3 模式仍保留，使用它们不属于“相同 V2 backbone”的实验。
 
@@ -112,13 +112,17 @@ python -m pytest -q tests
 
 测试包括原 MobileV3FPNHead C3 运算路径等价性、六种 attention/squeeze 组合与 V2 的四张 backbone 输出逐元素一致、双向 backbone 权重加载、仅一路特征进入 head、冻结参数/BN、统计无副作用、训练及断点续训、三种 pipeline 选项、跨进程 head 编号、外部权重绑定、完整模型严格加载和旧单阶段入口。使用 CPU 和合成 ADE20K 格式数据，不代表真实数据精度或 Windows/CUDA 实机结果。
 
-默认 multiscale/enhanced、输入 `[1,3,256,256]` 的实测统计：
+默认 original attention、learnable squeeze=True、enhanced fusion、输入 `[1,3,256,256]` 的实测统计：
 
 | 部分 | Params | MACs/图 |
 | --- | ---: | ---: |
-| backbone（与 V2 一致） | 947,712 | 434,700,288 |
+| backbone（与 V2 一致） | 757,860 | 385,425,408 |
 | C3 head（包含 64→128 接口适配） | 1,093,078 | 126,926,848 |
-| 整个网络 | 2,040,790 | 561,627,136 |
+| 整个网络 | 1,850,938 | 512,352,256 |
+
+本次只同步 backbone 默认配置，保留原 C3 head 的两个 IR context。需要小于 1M 的完整模型请使用并列的 `Segmentation_V2_V3_mini`。
+
+旧版 multiscale / squeeze=False 权重仍可通过训练入口的 `--seaformer-attention multiscale --no-learnable-squeeze` 使用；相同参数也支持 `profile_model.py`，得到旧统计 2,040,790 Params / 561,627,136 MACs。完整续训必须保持来源模型的设置，不能把新默认配置套到旧权重上。
 
 统计输出分别列出 backbone 的四张输出和实际进入 head 的一路 `[1,64,32,32]`。
 MACs 包含卷积、线性层和 attention QKᵀ/AV；不含归一化、插值、池化、逐元素运算和反向传播。

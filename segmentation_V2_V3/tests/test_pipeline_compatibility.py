@@ -91,3 +91,21 @@ def test_v2_backbone_can_transfer_but_its_full_head_cannot(tmp_path):
         torch.testing.assert_close(value, target.backbone.state_dict()[name], rtol=0, atol=0)
     with pytest.raises(ValueError, match='Full checkpoint backbone_name'):
         load_backbone(target, replace(cfg, backbone_checkpoint='', model_checkpoint=str(complete)))
+
+@pytest.mark.parametrize('flags,parameters,macs', [
+    ([], 1850938, 512352256),
+    (['--seaformer-attention', 'multiscale', '--no-learnable-squeeze'], 2040790, 561627136),
+])
+def test_profile_cli_selects_new_and_previous_backbone_settings(tmp_path, flags, parameters, macs):
+    import json
+    import subprocess
+    import sys
+    project = Path(__file__).resolve().parents[1]
+    output = tmp_path / 'profile.json'
+    result = subprocess.run([sys.executable, str(project / 'profile_model.py'), '--size', '256',
+                             '--output', str(output), *flags], cwd=tmp_path,
+                            text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(output.read_text())
+    assert report['parameters'] == parameters
+    assert report['total_counted_macs'] == macs

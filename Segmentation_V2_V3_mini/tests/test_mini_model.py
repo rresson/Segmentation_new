@@ -26,16 +26,16 @@ def test_default_is_exactly_one_ir_se_context_c3_only_and_under_one_million():
     block = head.context[0]
     assert isinstance(block, InvertedResidualV3) and block.use_residual
     assert isinstance(block.se, SqueezeExcitation)
-    assert block.expand[0].in_channels == block.project[0].out_channels == 64
-    assert block.expand[0].out_channels == block.project[0].in_channels == 120
+    assert block.expand[0].in_channels == block.project[0].out_channels == 128
+    assert block.expand[0].out_channels == block.project[0].in_channels == 368
     assert block.depthwise[0].kernel_size == (5, 5)
-    assert block.se.reduce.out_channels == 32
+    assert block.se.reduce.out_channels == 96
     assert set(dict(head.named_children())) == {'input_projection', 'context', 'lateral', 'refine', 'classifier'}
     stats = profile_model(model, torch.zeros(1,3,256,256))
-    assert stats['parameters'] == 998278
-    assert stats['backbone_parameters'] == 947712
-    assert stats['head_parameters'] == 50566
-    assert stats['total_counted_macs'] == 445306368
+    assert stats['parameters'] == 997178
+    assert stats['backbone_parameters'] == 757860
+    assert stats['head_parameters'] == 239318
+    assert stats['total_counted_macs'] == 427811840
     assert stats['head_input_shapes'] == [[1,64,32,32]]
     assert stats['output_shape'] == [1,150,16,16]
     assert not any(m._forward_hooks for m in model.modules())
@@ -49,16 +49,21 @@ def test_default_is_exactly_one_ir_se_context_c3_only_and_under_one_million():
         head([torch.zeros(1,64,8,8)] * 3)
 
 
-@pytest.mark.parametrize('expanded,expected', [(72,986462), (96,991406), (112,996502), (128,1000054)])
-def test_expansion_configuration_controls_real_parameter_count(expanded, expected):
-    cfg = prepare_config(Config(stem_pretrained=False, context_expanded_channels=expanded))
+@pytest.mark.parametrize('width,expanded,expected', [
+    (64,72,796610), (64,96,801554), (64,112,806650), (64,128,810202),
+    (64,512,993850), (64,520,1005490), (96,448,999338),
+    (128,352,983890), (128,368,997178), (128,376,1001002),
+])
+def test_expansion_configuration_controls_real_parameter_count(width, expanded, expected):
+    cfg = prepare_config(Config(stem_pretrained=False, head_width=width, context_expanded_channels=expanded))
     model = build_model(cfg)
     assert sum(p.numel() for p in model.parameters()) == expected
     assert model.decode_head.context[0].expand[0].out_channels == expanded
 
 
 @pytest.mark.parametrize('overrides', [dict(context_expanded_channels=64), dict(context_expanded_channels=121),
-                                        dict(head_width=128), dict(head_name='mobile_c3'),
+                                        dict(head_width=65), dict(head_width=True), dict(context_expanded_channels=128),
+                                        dict(head_name='mobile_c3'),
                                         dict(seaformer_depths=(1,2,2)), dict(backbone_name='mobile_v3')])
 def test_mini_rejects_silent_architecture_changes(overrides):
     with pytest.raises(ValueError):
@@ -105,12 +110,24 @@ def test_no_torchvision_and_profile_cli_supports_expansion(tmp_path):
     env = {**os.environ, 'OMP_NUM_THREADS':'2','MKL_NUM_THREADS':'2','PYTHONDONTWRITEBYTECODE':'1'}
     imported = subprocess.run([sys.executable,'-c',script],cwd=project,text=True,capture_output=True,env=env,timeout=30)
     assert imported.returncode == 0, imported.stderr
-    assert imported.stdout.strip().endswith('998278')
+    assert imported.stdout.strip().endswith('997178')
     output = tmp_path/'profile.json'
     result = subprocess.run([sys.executable,str(project/'profile_model.py'),'--size','256','--mode','head',
-                             '--context-expanded-channels','112','--output',str(output)],cwd=tmp_path,
+                             '--head-width','64','--context-expanded-channels','112','--output',str(output)],cwd=tmp_path,
                             text=True,capture_output=True,env=env,timeout=30)
     assert result.returncode == 0,result.stdout+result.stderr
     import json
     report=json.loads(output.read_text())
-    assert report['parameters'] == 996502 and report['trainable_parameters'] == 48790
+    assert report['parameters'] == 806650 and report['trainable_parameters'] == 48790
+
+def test_defaults_match_latest_v2_backbone_config():
+    from segmentation.models.seaformer import backbone_network_config
+    source_config, _, _ = reference_modules('segmentation_V2')
+    expected = source_config.network_kwargs(source_config.Config())
+    actual = backbone_network_config()
+    cfg = Config()
+    assert cfg.seaformer_attention == expected['attention_type'] == 'original'
+    assert cfg.seaformer_learnable_squeeze == expected['use_learnable_squeeze'] is True
+    for key in ('dim', 'key_dim', 'num_heads', 'attn_ratio', 'pos_shape', 'use_learnable_squeeze',
+                'ffn_ratio', 'expansion_ratio1', 'expansion_ratio2', 'attention_type', 'fusion_type'):
+        assert actual[key] == expected[key], key

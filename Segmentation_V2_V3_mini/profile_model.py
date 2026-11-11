@@ -410,11 +410,14 @@ def main() -> None:
         help="JSON output available",
     )
     parser.add_argument("--context-expanded-channels", type=int)
+    parser.add_argument("--head-width", type=int)
     parser.add_argument("--seaformer-attention", choices=("original", "multiscale", "lepe"))
+    parser.add_argument("--learnable-squeeze", dest="seaformer_learnable_squeeze",
+                        action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
 
     config = Config()
-    for key in ("context_expanded_channels", "seaformer_attention"):
+    for key in ("head_width", "context_expanded_channels", "seaformer_attention", "seaformer_learnable_squeeze"):
         if getattr(args, key) is not None:
             setattr(config, key, getattr(args, key))
     if args.mode is not None:

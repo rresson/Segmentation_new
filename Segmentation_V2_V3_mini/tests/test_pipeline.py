@@ -90,7 +90,7 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
     common = [sys.executable, str(project / entrypoint), '--data-root', cfg.data_root,
               '--output-root', str(root), '--epochs', '1', '--batch-size', '2',
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
-              '--device', 'cpu', '--no-pretrained-stem', '--context-expanded-channels', '112']
+              '--device', 'cpu', '--no-pretrained-stem', '--head-width', '64', '--context-expanded-channels', '112']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
     first = subprocess.run(common, input='1\n', text=True, capture_output=True, cwd=tmp_path,
                            env=env, timeout=120)
@@ -140,7 +140,9 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
     common = [sys.executable, str(project / 'main.py'), '--data-root', cfg.data_root,
               '--output-root', str(root), '--epochs', '2', '--batch-size', '2',
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
-              '--device', 'cpu', '--no-pretrained-stem']
+              '--device', 'cpu', '--no-pretrained-stem',
+              '--seaformer-attention', 'multiscale', '--no-learnable-squeeze',
+              '--head-width', '64', '--context-expanded-channels', '120']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
     first = subprocess.run(common + ['--mode=pretrain'], stdin=subprocess.DEVNULL,
                            text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
