@@ -1,16 +1,19 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import csv
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
 import pytest
 import torch
 
-from segmentation import Config
+from segmentation import Config, run_experiment
+from segmentation.config import PIPELINE_DEFAULTS, prepare_config
 from segmentation.pipeline import backbone_training_checkpoint, checkpoint_run, run_pipeline
 from segmentation.run_paths import reserve_head_directory
 from test_seaformer import make_dataset as make_data
@@ -38,6 +41,84 @@ def assert_frozen_backbone(source, output):
     model = torch.load(output / 'last.pth', weights_only=True)['model']
     for name, value in weights.items():
         torch.testing.assert_close(value, model['backbone.' + name], rtol=0, atol=0)
+
+
+def test_pipeline_budget_and_explicit_limits():
+    full = prepare_config(Config(), training_defaults=PIPELINE_DEFAULTS)
+    assert (full.epochs, full.early_stopping_patience) == (100, 10)
+    assert (full.max_train_samples, full.max_val_samples) == (0, 0)
+    single = prepare_config(Config())
+    assert (single.epochs, single.early_stopping_patience) == (5, 0)
+    assert (single.max_train_samples, single.max_val_samples) == (1000, 200)
+    cfg = Config(epochs=5, max_train_samples=7, max_val_samples=3, early_stopping_patience=0)
+    short = prepare_config(cfg, training_defaults=PIPELINE_DEFAULTS)
+    assert (short.epochs, short.early_stopping_patience) == (5, 0)
+    assert (short.max_train_samples, short.max_val_samples) == (7, 3)
+    with pytest.raises(ValueError, match='early_stopping_patience'):
+        prepare_config(replace(cfg, early_stopping_patience=-1))
+
+
+def test_pipeline_uses_selected_three_scale_fpn_after_simple_pretraining(tmp_path):
+    cfg = replace(small_config(tmp_path), mode='pretrain', backbone_name='mobile_v3',
+                  head_name='mobile_fpn')
+    joint = run_pipeline(cfg, 1)
+    pretrain = Path(joint['pretrain']['output_dir'])
+    head = Path(joint['head']['output_dir'])
+    assert json.loads((pretrain / 'config.json').read_text())['head_name'] == 'simple'
+    assert json.loads((head / 'config.json').read_text())['head_name'] == 'mobile_fpn'
+    assert joint['head']['head_input_shapes'] == [[2, 32, 16, 16], [2, 64, 8, 8], [2, 128, 4, 4]]
+    assert_frozen_backbone(pretrain / 'backbone_best_miou.pth', head)
+
+
+def test_resume_checkpoint_created_before_early_stopping(tmp_path):
+    cfg = replace(small_config(tmp_path), mode='pretrain')
+    stage = run_experiment(cfg)
+    path = Path(stage['output_dir']) / 'last.pth'
+    legacy = torch.load(path, weights_only=True)
+    del legacy['config']['early_stopping_patience']
+    del legacy['epochs_without_improvement']
+    torch.save(legacy, path)
+    resumed = run_experiment(replace(cfg, epochs=None, resume=str(path)))
+    assert resumed['epochs_completed'] == 1 and not resumed['stopped_early']
+    assert json.loads((path.parent / 'config.json').read_text())['early_stopping_patience'] == 0
+
+
+def test_early_stop_tracks_validation_miou_per_stage_and_across_resume(tmp_path, monkeypatch):
+    cfg = replace(small_config(tmp_path), epochs=None, early_stopping_patience=2, save_every=4)
+    # 固定验证指标以精确触发持平、创新高、下降。训练和权重保存仍走真实路径。
+    scores = iter([.20, .20, .30, .30, .25,   # pretrain 在第 5 轮停止
+                   .10, .10, .10])             # head 在第 3 轮停止
+    monkeypatch.setattr('segmentation.trainer.validate', lambda **kw: (next(scores), 1.0))
+    joint = run_pipeline(cfg, 1, pretrain_epochs=8)
+    pretrain = Path(joint['pretrain']['output_dir'])
+    head = Path(joint['head']['output_dir'])
+    for folder, end, best, budget in ((pretrain, 5, 3, 8), (head, 3, 1, 100)):
+        stage = json.loads((folder / 'pipeline.json').read_text())
+        assert stage['stopped_early'] and stage['epochs_completed'] == end
+        last = torch.load(folder / 'last.pth', weights_only=True)
+        assert last['epoch'] == end and last['epochs_without_improvement'] == 2
+        assert last['config']['epochs'] == budget
+        assert (last['config']['max_train_samples'], last['config']['max_val_samples']) == (0, 0)
+        assert torch.load(folder / 'best_miou.pth', weights_only=True)['epoch'] == best
+        assert (folder / f'epoch_{end:03d}.pth').exists()
+        with (folder / 'history.csv').open() as rows:
+            assert [int(row['epoch']) for row in csv.DictReader(rows)] == list(range(1, end + 1))
+    assert_frozen_backbone(pretrain / 'backbone_best_miou.pth', head)
+
+    replay = tmp_path / 'replay'
+    replay.mkdir()
+    before_stop = replay / 'epoch_004.pth'
+    shutil.copyfile(pretrain / before_stop.name, before_stop)
+    resume_cfg = replace(cfg, mode="pretrain", resume=str(before_stop), early_stopping_patience=None)
+    scores = iter([.25])
+    resumed = run_experiment(resume_cfg)
+    assert resumed['epochs_completed'] == 5 and resumed['stopped_early']
+    assert torch.load(replay / 'last.pth', weights_only=True)['epochs_without_improvement'] == 2
+
+    history = (replay / 'history.csv').read_bytes()
+    terminal = run_experiment(replace(resume_cfg, resume=str(replay / 'last.pth')))
+    assert terminal['epochs_completed'] == 5 and terminal['stopped_early']
+    assert (replay / 'history.csv').read_bytes() == history
 
 
 def test_all_three_choices_keep_lineage_and_exact_frozen_states(tmp_path):

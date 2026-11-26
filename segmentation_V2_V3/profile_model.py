@@ -20,6 +20,11 @@ import random
 from contextlib import contextmanager
 from pathlib import Path
 
+if __name__ == "__main__":
+    from bootstrap_dependencies import ensure_dependencies
+
+    ensure_dependencies()
+
 import numpy as np
 import torch
 from torch import nn

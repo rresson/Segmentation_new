@@ -203,6 +203,12 @@ def check_resume_config(
     cfg: Config,
     trainable_names: list[str],
 ) -> None:
+    required = {"model", "config", "optimizer", "scheduler", "scaler", "epoch",
+                "trainable_names", "best_miou", "best_accuracy"}
+    if checkpoint.get("config", {}).get("early_stopping_patience", 0):
+        required.add("epochs_without_improvement")
+    if not required.issubset(checkpoint):
+        raise ValueError("resume requires a complete training checkpoint")
     if checkpoint["trainable_names"] != trainable_names:
         raise ValueError(
             "The training parameter range changed. "
@@ -213,6 +219,7 @@ def check_resume_config(
 
     keys = (
         "epochs",
+        "early_stopping_patience",
         "num_classes",
         "mean",
         "std",
@@ -236,6 +243,7 @@ def check_resume_config(
     )
 
     legacy_defaults = {
+        "early_stopping_patience": 0,
         "backbone_name": "demo",
         "head_name": "fpn",
         "head_width": 128,

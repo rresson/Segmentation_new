@@ -31,15 +31,24 @@ V2 backbone 的 f3（64 通道，1/8）
 
 只给 decode_head 一张 f3 特征图，不使用 FPN 的 C1/C2 lateral、top-down、cat 或 fuse，也不使用 V2 的原主头/辅助头。64→128 接口适配属于 **decode_head**，不会改变 backbone 的 state_dict 或冻结边界。
 
+项目也提供三尺度 `MobileV3FPNHead`。在 `segmentation/config.py` 中选择 `backbone_name="mobile_v3"` 和 `head_name="mobile_fpn"` 后，head 或 custom 阶段会走 C1、C2、C3 三路，逐级上采样相加，再分别细化、拼接并分类。该组合使用项目自定义的 MobileNetV3 风格 backbone，需要与它匹配的权重。选项 1 使用这个组合时，pretrain 阶段先用 `SimpleHead`，head 阶段再使用三尺度 FPN。
+
+在单张 `256×256` 输入下，两种组合实际进入 head 的特征和原始输出如下。尺寸按通道数、高、宽排列，输出为上采样回标签尺寸前的 logits。
+
+| backbone / head | 进入 head 的特征 | head 输出 |
+| --- | --- | --- |
+| `seaformer / mobile_c3`（默认） | `64×32×32` | `150×16×16` |
+| `mobile_v3 / mobile_fpn` | `32×64×64`、`64×32×32`、`128×16×16` | `150×64×64` |
+
 ## 运行
 
 ```bash
 cd segmentation_V2_V3
-python -m pip install -r requirements-dev.txt
 python main.py
 ```
 
 在 `segmentation/config.py` 设置数据路径和训练参数，PyCharm 直接运行 `main.py` 即可显示菜单。
+首次运行 `main.py`、`pipeline.py` 或 `profile_model.py` 会在当前 Python 环境检查 `requirements-dev.txt` 及其引用的训练依赖，自动安装缺失或版本不符的包，再继续原命令。依赖齐全时可离线启动。ADE20K 数据路径通过 `--data-root` 指定。
 旧的单阶段命令通过 `--mode` 选择；`python pipeline.py` 也是独立的菜单入口。
 模型仍使用相同的 V2 backbone 和 MobileV3FPNHead C3 单路，每个阶段开始前输出并保存 Params/MACs。
 
@@ -57,7 +66,9 @@ python main.py --choice 2 --checkpoint runs/ade20k_v2_v3/run1/pretrain/backbone_
 python main.py --choice 3 --checkpoint runs/ade20k_v2_v3/run1/pretrain/best_miou.pth
 ```
 
-两阶段轮数默认均取 `Config.epochs`。选项 1 的 head 阶段只加载本次 pretrain 的最佳 backbone；第一阶段失败时不会继续训练 head。
+三个 pipeline 选项默认使用完整训练集和验证集，每阶段最多 100 轮。`--epochs` 可设置各阶段的上限，`--pretrain-epochs` 和 `--head-epochs` 优先设置相应阶段。可用 `--max-train-samples` 和 `--max-val-samples` 指定子集大小，0 表示使用全部样本。
+
+每阶段以验证 mIoU 为早停指标，默认连续 10 轮未严格超过历史最佳值就结束该阶段。比较使用原始 mIoU 精度。`--early-stopping-patience N` 可调整等待轮数，0 可关闭早停。选项 1 的 pretrain 完成后，head 从本次 `backbone_best_miou.pth` 开始训练，并独立计算最佳值和等待轮数。每阶段的 `last.pth` 保存等待轮数，`pipeline.json` 记录实际完成轮数和早停状态。
 选项 3 也可指定 `backbone_best_miou.pth` / `backbone_last.pth`，但同目录必须保留配套的 `best_miou.pth` / `last.pth`，程序会核对两份 backbone 张量完全一致后加载完整模型。
 训练 head 时逐 epoch 检查 backbone 的参数和 BN buffers 不变；训练 backbone 时对整个 head 作相同检查。
 
@@ -88,8 +99,8 @@ python profile_model.py --size 256
 ```
 
 `--mode` / `--resume` 与 pipeline 的 `--choice` / `--checkpoint` / 阶段轮数参数不能混用。
-续训保持原来的模式、数据、网络、训练范围和总轮数；省略 `--output-dir` 会恢复到 checkpoint 原目录，不新增编号。
-custom backbone-only 的续训还需设置 `Config.trainable_prefixes=("backbone",)`。
+显式 `--mode` 启动的新训练默认使用 5 轮、1000 张训练图、200 张验证图，早停默认关闭。续训继承 checkpoint 的总轮数、样本上限、早停设置和等待轮数。旧 checkpoint 缺少早停设置时按关闭处理。省略 `--output-dir` 会恢复到原目录。已满足早停条件的 checkpoint 会直接返回。
+续训时应指定原模式和相同的数据、网络及优化设置。custom backbone-only 的续训可指定 `--mode custom --trainable-prefixes backbone`。
 `--model-checkpoint` 初始化整个模型，`--backbone-checkpoint` 只初始化 backbone，两者只能选一个。
 单阶段 custom 保留按 Config 训练范围从头训练的用法；单阶段 head 未指定权重时使用最近的 `runN/pretrain/backbone_best_miou.pth`，pipeline 选项 2/3 则始终由用户选择权重。
 显式输出目录已存在时会追加 `_2`、`_3`，避免覆盖旧实验；旧版不带 run 的 checkpoint 仍可通过显式路径加载或续训。
@@ -120,7 +131,7 @@ python -m pytest -q tests
 | C3 head（包含 64→128 接口适配） | 1,093,078 | 126,926,848 |
 | 整个网络 | 1,850,938 | 512,352,256 |
 
-本次只同步 backbone 默认配置，保留原 C3 head 的两个 IR context。需要小于 1M 的完整模型请使用并列的 `Segmentation_V2_V3_mini`。
+默认 C3 head 包含两个 IR context 块。小于 1M 参数的模型见并列的 `Segmentation_V2_V3_mini`。
 
 旧版 multiscale / squeeze=False 权重仍可通过训练入口的 `--seaformer-attention multiscale --no-learnable-squeeze` 使用；相同参数也支持 `profile_model.py`，得到旧统计 2,040,790 Params / 561,627,136 MACs。完整续训必须保持来源模型的设置，不能把新默认配置套到旧权重上。
 

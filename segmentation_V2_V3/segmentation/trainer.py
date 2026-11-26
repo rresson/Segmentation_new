@@ -20,7 +20,7 @@ from .checkpoints import (
     export_backbone,
     load_backbone,
 )
-from .config import Config, prepare_config
+from .config import Config, SINGLE_STAGE_DEFAULTS, prepare_config
 from .dataset import ADE20KDataset
 from .engine import train_one_epoch, validate
 from .freezing import (
@@ -32,11 +32,17 @@ from .freezing import (
 )
 from .models import build_model
 from .run_paths import prepare_output_dir
-from .utils import seed_everything, seed_worker
+from .utils import resolve_path, seed_everything, seed_worker
 
 
 def run_experiment(config: Config) -> dict:
-    cfg = prepare_config(config)
+    checkpoint = None
+    training_defaults = SINGLE_STAGE_DEFAULTS
+    if config.resume:
+        checkpoint = torch.load(resolve_path(config.resume), map_location="cpu", weights_only=True)
+        # 缺少样本上限字段的早期 checkpoint 使用全量数据。
+        training_defaults = {"max_train_samples": 0, "max_val_samples": 0, **checkpoint.get("config", {})}
+    cfg = prepare_config(config, training_defaults=training_defaults)
     seed_everything(cfg.seed)
 
     device = torch.device(
@@ -108,17 +114,12 @@ def run_experiment(config: Config) -> dict:
         enabled=cfg.amp and device.type == "cuda",
     )
 
-    start_epoch = 0
+    epoch = 0
+    epochs_without_improvement = 0
     best_miou = -math.inf
     best_accuracy = -math.inf
 
-    if cfg.resume:
-        checkpoint = torch.load(
-            cfg.resume,
-            map_location="cpu",
-            weights_only=True,
-        )
-
+    if checkpoint is not None:
         check_resume_config(
             checkpoint,
             cfg,
@@ -133,12 +134,13 @@ def run_experiment(config: Config) -> dict:
         scheduler.load_state_dict(checkpoint["scheduler"])
         scaler.load_state_dict(checkpoint["scaler"])
 
-        start_epoch = checkpoint["epoch"]
+        epoch = checkpoint["epoch"]
         best_miou = checkpoint["best_miou"]
         best_accuracy = checkpoint["best_accuracy"]
+        epochs_without_improvement = checkpoint.get("epochs_without_improvement", 0)
 
         print(
-            f"恢复第 {start_epoch} 轮结束时的训练状态",
+            f"恢复第 {epoch} 轮结束时的训练状态",
             flush=True,
         )
 
@@ -194,7 +196,10 @@ def run_experiment(config: Config) -> dict:
         flush=True,
     )
 
-    for epoch in range(start_epoch + 1, cfg.epochs + 1):
+    patience = cfg.early_stopping_patience
+    stopped_early = 0 < patience <= epochs_without_improvement
+    while epoch < cfg.epochs and not stopped_early:
+        epoch += 1
         seed_everything(cfg.seed + epoch)
 
         started = time.time()
@@ -224,6 +229,8 @@ def run_experiment(config: Config) -> dict:
 
         improved_miou = miou > best_miou
         improved_accuracy = accuracy > best_accuracy
+        epochs_without_improvement = 0 if improved_miou else epochs_without_improvement + 1
+        stopped_early = 0 < patience <= epochs_without_improvement
 
         best_miou = max(best_miou, miou)
         best_accuracy = max(best_accuracy, accuracy)
@@ -239,6 +246,7 @@ def run_experiment(config: Config) -> dict:
             "scaler": scaler.state_dict(),
             "best_miou": best_miou,
             "best_accuracy": best_accuracy,
+            "epochs_without_improvement": epochs_without_improvement,
             "val_miou": miou,
             "val_accuracy": accuracy,
             "trainable_names": trainable_names,
@@ -262,7 +270,7 @@ def run_experiment(config: Config) -> dict:
                 output / "best_accuracy.pth",
             )
 
-        if epoch % cfg.save_every == 0 or epoch == cfg.epochs:
+        if epoch % cfg.save_every == 0 or epoch == cfg.epochs or stopped_early:
             atomic_save(
                 payload,
                 output / f"epoch_{epoch:03d}.pth",
@@ -333,4 +341,7 @@ def run_experiment(config: Config) -> dict:
             flush=True,
         )
 
-    return {**profile, "output_dir": str(output), "run_name": cfg.run_name}
+    if stopped_early:
+        print(f"第 {epoch} 轮早停：验证 mIoU 连续 {epochs_without_improvement} 轮未创新高。", flush=True)
+    return {**profile, "output_dir": str(output), "run_name": cfg.run_name,
+            "epochs_completed": epoch, "stopped_early": stopped_early}

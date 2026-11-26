@@ -9,6 +9,13 @@ from typing import Literal
 from .utils import resolve_path
 
 
+# 同一个训练器也用于单阶段入口；只有 pipeline 默认使用完整训练预算。
+SINGLE_STAGE_DEFAULTS = dict(epochs=5, max_train_samples=1000, max_val_samples=200,
+                             early_stopping_patience=0)
+PIPELINE_DEFAULTS = dict(epochs=100, max_train_samples=0, max_val_samples=0,
+                         early_stopping_patience=10)
+
+
 @dataclass
 class Config:
     # pretrain：旧 CNN + SimpleHead；SeaFormer 始终使用 MobileV3C3Head。
@@ -60,8 +67,8 @@ class Config:
     num_classes: int = 150
     ignore_index: int = 255
 
-    # 保留原工程的快速验证训练预算。
-    epochs: int = 5
+    # None 继承入口或续训 checkpoint 的预算，显式值优先。
+    epochs: int | None = None
     batch_size: int = 4
     num_workers: int = 0
 
@@ -75,8 +82,8 @@ class Config:
     val_max_side: int = 512
 
     # 0 表示使用全部样本。
-    max_train_samples: int = 1000
-    max_val_samples: int = 200
+    max_train_samples: int | None = None
+    max_val_samples: int | None = None
 
     mean: tuple[float, ...] = (0.485, 0.456, 0.406)
     std: tuple[float, ...] = (0.229, 0.224, 0.225)
@@ -85,11 +92,22 @@ class Config:
     amp: bool = True
     seed: int = 42
     device: str = "auto"
+    early_stopping_patience: int | None = None
 
 
-def prepare_config(config: Config) -> Config:
+def with_training_defaults(config: Config, defaults: dict) -> Config:
+    """只补齐训练预算，各阶段独立选择 backbone、head 和训练范围。"""
+    inherited = {
+        name: defaults.get(name, fallback)
+        for name, fallback in SINGLE_STAGE_DEFAULTS.items()
+        if getattr(config, name) is None
+    }
+    return replace(config, **inherited)
+
+
+def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEFAULTS) -> Config:
     """生成实际配置，不修改调用者传入的对象。"""
-    cfg = replace(config)
+    cfg = with_training_defaults(config, training_defaults)
 
     if cfg.run_name and re.fullmatch(r"run[1-9][0-9]*", cfg.run_name) is None:
         raise ValueError("run_name must be empty or run followed by a positive integer")
@@ -178,6 +196,9 @@ def prepare_config(config: Config) -> Config:
         raise ValueError(
             "num_workers and sample limits cannot be negative"
         )
+
+    if type(cfg.early_stopping_patience) is not int or cfg.early_stopping_patience < 0:
+        raise ValueError("early_stopping_patience must be a nonnegative integer (0 disables early stopping)")
 
     if (
         cfg.crop_size < 32

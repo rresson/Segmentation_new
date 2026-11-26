@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
-from .config import Config
+from .config import Config, SINGLE_STAGE_DEFAULTS
 
 
 def encode_mask(raw: np.ndarray, cfg: Config) -> np.ndarray:
@@ -34,7 +34,10 @@ class ADE20KDataset(Dataset[tuple[Tensor, Tensor]]):
         root = Path(cfg.data_root)
         self.images = sorted((root / "images" / split).glob("*.jpg"))
         # 固定随机子集；0 表示全部。两个阶段相同种子会选择相同图片。
-        limit = cfg.max_train_samples if self.training else cfg.max_val_samples
+        limit_name = "max_train_samples" if self.training else "max_val_samples"
+        limit = getattr(cfg, limit_name)
+        if limit is None:
+            limit = SINGLE_STAGE_DEFAULTS[limit_name]
         if limit > 0 and len(self.images) > limit:
             rng = random.Random(cfg.seed + (0 if self.training else 10000))
             indices = sorted(rng.sample(range(len(self.images)), limit))

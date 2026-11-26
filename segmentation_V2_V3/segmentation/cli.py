@@ -17,6 +17,9 @@ def add_config_arguments(parser, *, single_stage=True):
     for name in ("epochs", "batch-size", "num-workers", "crop-size", "val-short-side",
                  "val-max-side", "max-train-samples", "max-val-samples"):
         parser.add_argument(f"--{name}", type=int)
+    parser.add_argument("--head-width", type=int)
+    if single_stage:
+        parser.add_argument("--trainable-prefixes", nargs="+", help="custom 模式的训练范围，例如 backbone")
     parser.add_argument("--seaformer-attention", choices=("original", "multiscale", "lepe"))
     parser.add_argument("--learnable-squeeze", dest="seaformer_learnable_squeeze",
                         action=argparse.BooleanOptionalAction, default=None)
@@ -32,7 +35,11 @@ def main(argv=None, *, pipeline_only=False):
     parser.add_argument("--checkpoint", help="pipeline 选项 2/3 手动选择的权重")
     parser.add_argument("--pretrain-epochs", type=int)
     parser.add_argument("--head-epochs", type=int)
+    parser.add_argument("--early-stopping-patience", type=int, metavar="N",
+                        help="验证 mIoU 连续 N 轮未创新高时结束当前阶段；pipeline 默认 10，0 关闭")
     args = vars(parser.parse_args(argv))
+    if args.get("trainable_prefixes") is not None:
+        args["trainable_prefixes"] = tuple(args["trainable_prefixes"])
     pipeline_args = {key: args.pop(key) for key in
                      ("choice", "checkpoint", "pretrain_epochs", "head_epochs")}
     cfg = replace(Config(), **{key: value for key, value in args.items() if value is not None})
@@ -41,7 +48,7 @@ def main(argv=None, *, pipeline_only=False):
         if any(value is not None for value in pipeline_args.values()):
             parser.error("--mode/--resume 不能与 --choice/--checkpoint/阶段轮数混用。")
         return run_experiment(cfg)
-    for key in ("output_dir", "run_name", "backbone_checkpoint", "model_checkpoint"):
+    for key in ("output_dir", "run_name", "backbone_checkpoint", "model_checkpoint", "trainable_prefixes"):
         if args.get(key) is not None:
             parser.error(f"--{key.replace('_', '-')} 用于单阶段训练，请同时指定 --mode；"
                          "pipeline 手动权重请用 --checkpoint。")

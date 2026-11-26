@@ -1,8 +1,11 @@
 """运行 main.py 启动 pipeline；--mode/--resume 保留单阶段训练入口。"""
-from segmentation.cli import main as run_cli
+from bootstrap_dependencies import ensure_dependencies
 
 
 def main(argv=None):
+    ensure_dependencies()
+    from segmentation.cli import main as run_cli
+
     return run_cli(argv)
 
 

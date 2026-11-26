@@ -12,7 +12,7 @@ import sqlite3
 import torch
 
 from .checkpoints import checkpoint_state
-from .config import Config, prepare_config
+from .config import Config, PIPELINE_DEFAULTS, prepare_config, with_training_defaults
 from .models.uploaded_backbone import BACKBONE_MODULES
 from .run_paths import _new_run
 from .trainer import run_experiment
@@ -98,7 +98,8 @@ def _record(report: dict, choice: int, selected: Path | None, loaded: Path | Non
         json.dumps({"choice": choice, "run_name": report["run_name"],
                     "selected_checkpoint": str(selected) if selected else "",
                     "loaded_checkpoint": str(loaded) if loaded else "",
-                    "output_dir": report["output_dir"]}, indent=2, ensure_ascii=False),
+                    "output_dir": report["output_dir"], "epochs_completed": report["epochs_completed"],
+                    "stopped_early": report["stopped_early"]}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -121,6 +122,7 @@ def run_pipeline(config: Config, choice: int, *, checkpoint: str = "",
     # 路径、初始化和训练范围由所选流程确定；保留数据、网络和优化超参数。
     base = replace(config, output_dir="", run_name="", resume="",
                    backbone_checkpoint="", model_checkpoint="", checkpoint_prefix="")
+    base = with_training_defaults(base, PIPELINE_DEFAULTS)
     prepare_config(base)  # 创建目录前检查常规配置。
     root = resolve_path(base.output_root).resolve()
 
