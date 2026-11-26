@@ -11,6 +11,10 @@ def add_config_arguments(parser, *, single_stage=True):
     """训练入口和 pipeline 共享数据、模型与优化配置参数。"""
     if single_stage:
         parser.add_argument("--mode", choices=("pretrain", "head", "custom"))
+    parser.add_argument("--seed", type=int, help="基础随机种子，默认 42")
+    parser.add_argument("--lr", "--learning-rate", dest="learning_rate", type=float,
+                        help="当前阶段的初始学习率，默认 0.001")
+    parser.add_argument("--min-lr", type=float, help="余弦衰减的最低学习率，默认 0.000001")
     paths = ("data-root", "output-root", "device")
     if single_stage:
         paths += ("output-dir", "run-name", "backbone-checkpoint", "model-checkpoint", "resume")
