@@ -53,10 +53,8 @@ class MobileV3FPNHead(nn.Module):
     ) -> None:
         super().__init__()
 
-        if tuple(in_channels) != (32, 64, 128):
-            raise ValueError(
-                "Expected backbone channels (32, 64, 128)"
-            )
+        if len(in_channels) != 3 or in_channels[-1] != 128:
+            raise ValueError("Expected three FPN inputs with a 128-channel C3")
 
         if width < 8 or width % 8:
             raise ValueError(
@@ -195,17 +193,33 @@ class MobileV3C3Head(nn.Module):
         return self.classifier(self.refine(self.lateral(self.context(features[0]))))
 
 
+def v2_c3_projection():
+    return nn.Sequential(
+        nn.Conv2d(64, 64, 3, stride=2, padding=1, groups=64, bias=False),
+        nn.BatchNorm2d(64), nn.ReLU6(inplace=True),
+        nn.Conv2d(64, 128, 1, bias=False), nn.BatchNorm2d(128),
+    )
+
+
 class MobileV2C3Head(MobileV3C3Head):
     """V2 的最终 fusion 特征经 head 内适配后进入原 MobileV3 C3 路径。"""
     def __init__(self, num_classes=150, width=128):
         super().__init__(128, num_classes, width)
-        self.input_projection = nn.Sequential(
-            nn.Conv2d(64, 64, 3, stride=2, padding=1, groups=64, bias=False),
-            nn.BatchNorm2d(64), nn.ReLU6(inplace=True),
-            nn.Conv2d(64, 128, 1, bias=False), nn.BatchNorm2d(128),
-        )
+        self.input_projection = v2_c3_projection()
 
     def forward(self, features):
         if isinstance(features, Tensor) or len(features) != 1:
             raise ValueError("MobileV2C3Head requires exactly one feature map")
         return super().forward([self.input_projection(features[0])])
+
+
+class MobileV2FPNHead(MobileV3FPNHead):
+    """V2 的浅层 stem、f2 和适配后的 f3 分别进入完整 FPN 的 C1、C2、C3。"""
+
+    def __init__(self, num_classes=150, width=128):
+        super().__init__((24, 64, 128), num_classes, width)
+        self.input_projection = v2_c3_projection()
+
+    def forward(self, features):
+        low_level, f2, f3 = features
+        return super().forward((low_level, f2, self.input_projection(f3)))

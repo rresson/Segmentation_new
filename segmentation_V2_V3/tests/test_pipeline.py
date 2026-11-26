@@ -163,8 +163,10 @@ def test_all_three_choices_keep_lineage_and_exact_frozen_states(tmp_path):
     assert_frozen_backbone(updated_source, root / 'run2/head1')
 
 
-@pytest.mark.parametrize('entrypoint', ['main.py', 'pipeline.py'])
-def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entrypoint):
+@pytest.mark.parametrize('entrypoint,branches,head', [
+    ('main.py', 1, 'mobile_c3'), ('pipeline.py', 3, 'mobile_fpn'),
+])
+def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entrypoint, branches, head):
     cfg = small_config(tmp_path)
     project = Path(__file__).resolve().parents[1]
     root = tmp_path / 'runs with spaces'
@@ -173,26 +175,36 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
               '--device', 'cpu', '--no-pretrained-stem']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
-    first = subprocess.run(common, input='1\n', text=True, capture_output=True, cwd=tmp_path,
+    first = subprocess.run(common, input=f'x\n{branches}\n1\n', text=True, capture_output=True, cwd=tmp_path,
                            env=env, timeout=120)
     assert first.returncode == 0, first.stdout + first.stderr
-    assert '请选择' in first.stdout
+    assert first.stdout.index('请输入 head 路数') < first.stdout.index('请选择 [1/2/3]')
+    assert '请输入 1 或 3' in first.stdout
+    for stage in ('pretrain', 'head1'):
+        saved = json.loads((root / 'run1' / stage / 'config.json').read_text())
+        assert (saved['backbone_name'], saved['head_name']) == ('seaformer', head)
     assert first.stdout.count('pre-training detection:') == 2
     source = root / 'run1/pretrain/backbone_best_miou.pth'
-    second = subprocess.run(common, input=f'2\n"{source}"\n', text=True, capture_output=True,
+    other_branches = 3 if branches == 1 else 1
+    second = subprocess.run(common, input=f'{other_branches}\n2\n"{source}"\n', text=True, capture_output=True,
                             cwd=tmp_path, env=env, timeout=120)
     assert second.returncode == 0, second.stdout + second.stderr
     assert (root / 'run1/head1/last.pth').is_file()
     assert (root / 'run1/head2/last.pth').is_file()
     assert not (root / 'run2').exists()
     assert_frozen_backbone(source, root / 'run1/head2')
+    second_profile = json.loads((root / 'run1/head2/model_profile.json').read_text())
+    assert len(second_profile['head_input_shapes']) == other_branches
     assert second.stdout.count('pre-training detection:') == 1
 
     # 非交互命令也从同一入口进入 pipeline；custom 仅更新 backbone。
-    third = subprocess.run(common + ['--choice', '3', '--checkpoint', str(source)],
+    # 单路用原非交互命令；三路显式指定，并从完整 checkpoint 冻结原 head。
+    flags = ['--head-branches', '3'] if branches == 3 else []
+    third = subprocess.run(common + flags + ['--choice', '3', '--checkpoint', str(source)],
                            text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
     assert third.returncode == 0, third.stdout + third.stderr
     assert '请选择' not in third.stdout
+    assert '请输入 head 路数' not in third.stdout
     custom = root / 'run2/custom'
     initial = torch.load(source.with_name('best_miou.pth'), weights_only=True)['model']
     trained = torch.load(custom / 'last.pth', weights_only=True)
@@ -201,6 +213,11 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
         if name.startswith('decode_head.'):
             torch.testing.assert_close(value, trained['model'][name], rtol=0, atol=0)
     assert json.loads((custom / 'pipeline.json').read_text())['choice'] == 3
+    assert json.loads((custom / 'pipeline.json').read_text())['head_name'] == head
+    with pytest.raises(ValueError, match='head_name'):
+        run_pipeline(replace(cfg, output_root=str(root), head_name='mobile_c3' if branches == 3 else 'mobile_fpn'), 3,
+                     checkpoint=str(source.with_name('best_miou.pth')))
+    assert not (root / 'run3').exists()
 
 
 def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):

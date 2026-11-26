@@ -11,7 +11,7 @@ import sqlite3
 
 import torch
 
-from .checkpoints import checkpoint_state
+from .checkpoints import checkpoint_state, validate_metadata
 from .config import Config, PIPELINE_DEFAULTS, prepare_config, with_training_defaults
 from .models.uploaded_backbone import BACKBONE_MODULES
 from .run_paths import _new_run
@@ -70,12 +70,15 @@ def _has_head(state) -> bool:
     return any(name.startswith(("decode_head.", "segment_head.")) for name in state)
 
 
-def backbone_training_checkpoint(selected: Path) -> Path:
+def backbone_training_checkpoint(selected: Path, cfg: Config | None = None) -> Path:
     """训练 backbone 时必须有已训练的 head；校验导出 backbone 与完整权重配对。"""
-    state = checkpoint_state(torch.load(selected, map_location="cpu", weights_only=True))
+    checkpoint = torch.load(selected, map_location="cpu", weights_only=True)
+    state = checkpoint_state(checkpoint)
     if _has_head(state):
         if not _backbone_state(state):
             raise ValueError("所选 checkpoint 只有 head，需要同时包含 backbone 的完整模型。")
+        if cfg is not None:
+            validate_metadata(checkpoint, cfg, full_model=True)
         return selected
     paired_names = {"backbone_best_miou.pth": "best_miou.pth", "backbone_last.pth": "last.pth"}
     paired = selected.with_name(paired_names.get(selected.name, "best_miou.pth"))
@@ -84,18 +87,21 @@ def backbone_training_checkpoint(selected: Path) -> Path:
             "单独训练 backbone 需要冻结已有 head。请选择完整 best_miou.pth/last.pth，"
             "或保留 backbone_best_miou.pth/backbone_last.pth 同目录的配套完整 checkpoint。"
         )
-    full = checkpoint_state(torch.load(paired, map_location="cpu", weights_only=True))
+    checkpoint = torch.load(paired, map_location="cpu", weights_only=True)
+    full = checkpoint_state(checkpoint)
     left, right = _backbone_state(state), _backbone_state(full)
     if not _has_head(full) or not left or left.keys() != right.keys() or any(
         not torch.equal(value, right[name]) for name, value in left.items()
     ):
         raise ValueError(f"所选 backbone 与配套完整 checkpoint 不匹配：{paired}")
+    if cfg is not None:
+        validate_metadata(checkpoint, cfg, full_model=True)
     return paired
 
 
 def _record(report: dict, choice: int, selected: Path | None, loaded: Path | None) -> None:
     (Path(report["output_dir"]) / "pipeline.json").write_text(
-        json.dumps({"choice": choice, "run_name": report["run_name"],
+        json.dumps({"choice": choice, "run_name": report["run_name"], "head_name": report["head_name"],
                     "selected_checkpoint": str(selected) if selected else "",
                     "loaded_checkpoint": str(loaded) if loaded else "",
                     "output_dir": report["output_dir"], "epochs_completed": report["epochs_completed"],
@@ -155,7 +161,7 @@ def run_pipeline(config: Config, choice: int, *, checkpoint: str = "",
         _record(head, choice, selected, selected)
         return {"choice": choice, "run_dir": str(owner), "head": head}
 
-    full_checkpoint = backbone_training_checkpoint(selected)
+    full_checkpoint = backbone_training_checkpoint(selected, base)
     # 更新 backbone 后是一份新的 backbone 实验，另建 run，保留来源信息。
     owner = _new_run(root)
     backbone = run_experiment(replace(

@@ -95,8 +95,15 @@ class stem_block(nn.Module):
         }
         self.backbone.load_state_dict(stem_state, strict=True)
 
-    def forward(self, x):
-        return self.backbone(x)
+    def forward(self, x, *, return_low_level=False):
+        if not return_low_level:
+            return self.backbone(x)
+        # 第 3 号 block 是 stride 4 的最后一层；stem 中的层各执行一次。
+        for index, block in enumerate(self.backbone):
+            x = block(x)
+            if index == 3:
+                low_level = x
+        return low_level, x
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# MobileNetV2 backbone + MobileV3FPNHead C3 单路
+# V2 backbone 与单路 C3 / 三路 FPN 分割头
 
 本目录由原仓库根目录工程迁入，与 `segmentation_V2` 并列。根目录 README 提供三套工程入口。请在本目录运行命令，避免同名 `segmentation` 包混用。
 
@@ -11,7 +11,7 @@
 - 相同纯 PyTorch MobileNetV2 stem，保留末级 stride 修改。
 - 三个 context stage，每个包含两个 block；两次 context downscaling。
 - fusion1、fusion2、fusion3 按原 V2 前向顺序全部执行。
-- 原 attention/fusion/network/stem 源文件与 V2 对应文件一致，返回 `(f1,f2,f3,c2)`。
+- 单路沿用 V2 的 `(f1,f2,f3,c2)` 输出。三路额外读取已有 stem 的 stride-4 特征；两种读取方式使用同一套 backbone 参数和 BN buffers。
 - 默认与 V2 提交 `b8036a4` 对齐：`seaformer_attention="original"`、`seaformer_learnable_squeeze=True`、enhanced fusion；dim=64、key_dim=16、num_heads=4、attn_ratio=2、pos_shape=16、ffn_ratio=2、expansion_ratio=2。与 V2 比较时需使用相同 attention 与 learnable squeeze 配置。
 
 `seaformer_depths` 固定 `(2,2,2)`，避免误切回此前优化结构。其他遗留 demo/small_cnn/mobile_v3 模式仍保留，使用它们不属于“相同 V2 backbone”的实验。
@@ -29,16 +29,19 @@ V2 backbone 的 f3（64 通道，1/8）
   → classifier
 ```
 
-只给 decode_head 一张 f3 特征图，不使用 FPN 的 C1/C2 lateral、top-down、cat 或 fuse，也不使用 V2 的原主头/辅助头。64→128 接口适配属于 **decode_head**，不会改变 backbone 的 state_dict 或冻结边界。
+单路只给 decode_head 一张 f3 特征图。64→128 接口适配属于 **decode_head**。
 
-项目也提供三尺度 `MobileV3FPNHead`。在 `segmentation/config.py` 中选择 `backbone_name="mobile_v3"` 和 `head_name="mobile_fpn"` 后，head 或 custom 阶段会走 C1、C2、C3 三路，逐级上采样相加，再分别细化、拼接并分类。该组合使用项目自定义的 MobileNetV3 风格 backbone，需要与它匹配的权重。选项 1 使用这个组合时，pretrain 阶段先用 `SimpleHead`，head 阶段再使用三尺度 FPN。
+三路同样使用 V2 backbone。C1 取 stem 第 3 号 block 输出（stride 4），C2 取第二次融合的 f2（stride 8），C3 取最终融合的 f3，经与单路相同的 head 内投影得到 stride 16。三路进入 `MobileV3FPNHead`，逐级上采样相加，再分别细化、拼接、融合和分类。两种 head 都可从同一份 V2 backbone 权重开始训练。
 
-在单张 `256×256` 输入下，两种组合实际进入 head 的特征和原始输出如下。尺寸按通道数、高、宽排列，输出为上采样回标签尺寸前的 logits。
+在单张 `256×256` 输入下，各组合实际进入 head 的特征和原始输出如下。尺寸按通道数、高、宽排列，输出为上采样回标签尺寸前的 logits。
 
 | backbone / head | 进入 head 的特征 | head 输出 |
 | --- | --- | --- |
 | `seaformer / mobile_c3`（默认） | `64×32×32` | `150×16×16` |
+| `seaformer / mobile_fpn`（菜单三路） | `24×64×64`、`64×32×32`、`64×32×32`（最后一路在 head 内投影为 `128×16×16`） | `150×64×64` |
 | `mobile_v3 / mobile_fpn` | `32×64×64`、`64×32×32`、`128×16×16` | `150×64×64` |
+
+表中最后一行是原有的另一套 backbone，可通过 `Config.backbone_name="mobile_v3"` 和 `head_name="mobile_fpn"` 配置。
 
 ## 运行
 
@@ -50,7 +53,7 @@ python main.py
 在 `segmentation/config.py` 设置数据路径和训练参数，PyCharm 直接运行 `main.py` 即可显示菜单。
 首次运行 `main.py`、`pipeline.py` 或 `profile_model.py` 会在当前 Python 环境检查 `requirements-dev.txt` 及其引用的训练依赖，自动安装缺失或版本不符的包，再继续原命令。依赖齐全时可离线启动。ADE20K 数据路径通过 `--data-root` 指定。
 旧的单阶段命令通过 `--mode` 选择；`python pipeline.py` 也是独立的菜单入口。
-模型仍使用相同的 V2 backbone 和 MobileV3FPNHead C3 单路，每个阶段开始前输出并保存 Params/MACs。
+使用默认 V2 backbone 时，第一个菜单输入 **1** 选单路 C3，输入 **3** 选三路 FPN。回车采用配置中的 head，出厂默认为单路。第二个菜单再选择下表中的训练模式。每个阶段的 `config.json`、`pipeline.json` 记录所选 head，`model_profile.json` 保存实测 Params/MACs 和特征尺寸。
 
 | 选项 | 训练流程 | 保存位置 |
 | --- | --- | --- |
@@ -62,9 +65,11 @@ python main.py
 
 ```bash
 python main.py --choice 1 --data-root /path/to/ADEChallengeData2016 --pretrain-epochs 50 --head-epochs 20
-python main.py --choice 2 --checkpoint runs/ade20k_v2_v3/run1/pretrain/backbone_best_miou.pth
+python main.py --head-branches 3 --choice 2 --checkpoint runs/ade20k_v2_v3/run1/pretrain/backbone_best_miou.pth
 python main.py --choice 3 --checkpoint runs/ade20k_v2_v3/run1/pretrain/best_miou.pth
 ```
+
+指定 `--choice` 可直接启动，省略 `--head-branches` 时沿用配置。选项 1 的两个阶段都采用选定的 V2 head。选项 2 可用同一份 backbone 权重分别启动单路和三路实验。选项 3 冻结 checkpoint 中已训练的 head，所选路数必须与该完整模型一致。
 
 三个 pipeline 选项默认使用完整训练集和验证集，每阶段最多 100 轮。`--epochs` 可设置各阶段的上限，`--pretrain-epochs` 和 `--head-epochs` 优先设置相应阶段。可用 `--max-train-samples` 和 `--max-val-samples` 指定子集大小，0 表示使用全部样本。
 
@@ -95,6 +100,7 @@ runs/ade20k_v2_v3/
 python main.py --mode pretrain --data-root /path/to/ADEChallengeData2016
 python main.py --mode head --backbone-checkpoint runs/ade20k_v2_v3/run1/pretrain/backbone_best_miou.pth
 python main.py --mode head --resume runs/ade20k_v2_v3/run1/head1/last.pth
+python main.py --mode head --head-branches 3 --resume runs/ade20k_v2_v3/run1/head2/last.pth
 python profile_model.py --size 256
 ```
 
@@ -129,13 +135,15 @@ python -m pytest -q tests
 | --- | ---: | ---: |
 | backbone（与 V2 一致） | 757,860 | 385,425,408 |
 | C3 head（包含 64→128 接口适配） | 1,093,078 | 126,926,848 |
-| 整个网络 | 1,850,938 | 512,352,256 |
+| 单路整个网络 | 1,850,938 | 512,352,256 |
+| 三路 FPN head（含 C3 接口适配） | 1,194,326 | 526,893,056 |
+| 三路整个网络 | 1,952,186 | 912,318,464 |
 
 默认 C3 head 包含两个 IR context 块。小于 1M 参数的模型见并列的 `Segmentation_V2_V3_mini`。
 
 旧版 multiscale / squeeze=False 权重仍可通过训练入口的 `--seaformer-attention multiscale --no-learnable-squeeze` 使用；相同参数也支持 `profile_model.py`，得到旧统计 2,040,790 Params / 561,627,136 MACs。完整续训必须保持来源模型的设置，不能把新默认配置套到旧权重上。
 
-统计输出分别列出 backbone 的四张输出和实际进入 head 的一路 `[1,64,32,32]`。
+统计输出分别列出所选 backbone 的特征和实际进入 head 的特征。
 MACs 包含卷积、线性层和 attention QKᵀ/AV；不含归一化、插值、池化、逐元素运算和反向传播。
 
 历史单次 fusion attention 的实现保存在 `legacy_seaformer_attention.py`，仅供历史单元测试，当前默认 backbone 不使用它。`SEA_FORMER.md` 和 `instruction.md` 为历史资料。

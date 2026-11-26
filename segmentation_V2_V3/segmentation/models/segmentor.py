@@ -11,7 +11,7 @@ from ..config import Config
 from .cnn import DemoBackbone, SmallCNNBackbone
 from .heads import FPNHead, SimpleHead
 from .mobile_v3_cnn import MobileV3Backbone
-from .mobile_v3_head import MobileV2C3Head, MobileV3C3Head, MobileV3FPNHead
+from .mobile_v3_head import MobileV2C3Head, MobileV2FPNHead, MobileV3FPNHead
 
 
 class Segmentor(nn.Module):
@@ -33,7 +33,10 @@ class Segmentor(nn.Module):
         # 全部冻结时关闭 backbone 的梯度记录。
         # 部分微调时保留完整梯度路径。
         with torch.no_grad() if frozen else nullcontext():
-            features = self.backbone(x)
+            if isinstance(self.decode_head, MobileV2FPNHead):
+                features = self.backbone(x, return_pyramid=True)
+            else:
+                features = self.backbone(x)
 
         if isinstance(self.decode_head, MobileV2C3Head):
             features = [features[2]]  # 只把最终 fusion 输出接到 C3 路径。
@@ -74,8 +77,8 @@ def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmento
 
     head: nn.Module
 
-    if cfg.backbone_name == "seaformer" and cfg.head_name != "mobile_c3":
-        raise ValueError("SeaFormer supports only the single-input MobileV3C3Head")
+    if cfg.backbone_name == "seaformer" and cfg.head_name not in ("mobile_c3", "mobile_fpn"):
+        raise ValueError("SeaFormer requires mobile_c3 or mobile_fpn")
 
     if cfg.head_name == "mobile_c3":
         if cfg.backbone_name != "seaformer":
@@ -89,6 +92,8 @@ def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmento
         )
     elif cfg.head_name == "simple":
         head = SimpleHead(cfg.num_classes)
+    elif cfg.head_name == "mobile_fpn" and cfg.backbone_name == "seaformer":
+        head = MobileV2FPNHead(cfg.num_classes, cfg.head_width)
     elif cfg.head_name == "mobile_fpn":
         head = MobileV3FPNHead(
             backbone.out_channels,

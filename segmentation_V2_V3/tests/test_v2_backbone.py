@@ -47,6 +47,35 @@ def test_adapted_head_keeps_original_c3_computation_and_backbone_cost():
     assert len(report['backbone_feature_shapes']) == 4
 
 
+def test_v2_three_branch_fpn_uses_actual_stem_and_fusions_once():
+    torch.set_num_threads(2)
+    model = build_model(Config(stem_pretrained=False, head_name='mobile_fpn')).eval()
+    seen = {}
+
+    def capture(name):
+        def record(_module, _args, output):
+            assert name not in seen
+            seen[name] = output
+        return record
+
+    handles = [layer.register_forward_hook(capture(name)) for name, layer in (
+        ('stem4', model.backbone.stem.backbone[3]), ('f2', model.backbone.fusion2),
+        ('f3', model.backbone.fusion3), ('projected', model.decode_head.input_projection))]
+    head_inputs = []
+    handles.append(model.decode_head.register_forward_pre_hook(lambda _, args: head_inputs.extend(args[0])))
+    try:
+        logits = model(torch.randn(2, 3, 65, 97))
+    finally:
+        for handle in handles:
+            handle.remove()
+    assert all(tensor is seen[name] for tensor, name in zip(head_inputs, ('stem4', 'f2', 'f3'), strict=True))
+    assert seen['projected'].shape == (2, 128, 5, 7)
+    assert logits.shape == (2, 150, 17, 25)
+    logits.square().mean().backward()
+    for lateral in model.decode_head.lateral:
+        assert lateral.weight.grad.abs().sum() > 0
+
+
 @pytest.mark.parametrize('attention', ['original', 'multiscale', 'lepe'])
 @pytest.mark.parametrize('squeeze', [False, True])
 def test_same_backbone_features_weights_and_cross_project_checkpoints(tmp_path, attention, squeeze):

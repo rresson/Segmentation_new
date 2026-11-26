@@ -343,5 +343,5 @@ def run_experiment(config: Config) -> dict:
 
     if stopped_early:
         print(f"第 {epoch} 轮早停：验证 mIoU 连续 {epochs_without_improvement} 轮未创新高。", flush=True)
-    return {**profile, "output_dir": str(output), "run_name": cfg.run_name,
+    return {**profile, "output_dir": str(output), "run_name": cfg.run_name, "head_name": cfg.head_name,
             "epochs_completed": epoch, "stopped_early": stopped_early}

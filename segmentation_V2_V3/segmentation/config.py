@@ -18,7 +18,7 @@ PIPELINE_DEFAULTS = dict(epochs=100, max_train_samples=0, max_val_samples=0,
 
 @dataclass
 class Config:
-    # pretrain：旧 CNN + SimpleHead；SeaFormer 始终使用 MobileV3C3Head。
+    # pretrain：旧 CNN + SimpleHead；V2 SeaFormer 可选择单路 C3 或三路 FPN。
     # head：冻结 CNN，只训练所选分割头。
     # custom：使用下面设置的训练范围。
     mode: Literal["pretrain", "head", "custom"] = "custom"
@@ -136,7 +136,10 @@ def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEF
         )
 
     if cfg.mode == "pretrain":
-        cfg.head_name = "mobile_c3" if cfg.backbone_name == "seaformer" else "simple"
+        if cfg.backbone_name != "seaformer":
+            cfg.head_name = "simple"
+        elif cfg.head_name != "mobile_fpn":
+            cfg.head_name = "mobile_c3"
         cfg.trainable_prefixes = (
             "backbone",
             "decode_head",
@@ -148,8 +151,8 @@ def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEF
         cfg.allow_random_backbone = False
 
     if cfg.backbone_name == "seaformer":
-        if cfg.head_name != "mobile_c3":
-            raise ValueError("SeaFormer requires head_name='mobile_c3' (C3 only)")
+        if cfg.head_name not in ("mobile_c3", "mobile_fpn"):
+            raise ValueError("SeaFormer requires mobile_c3 or mobile_fpn")
         if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
             raise ValueError("Unknown seaformer_attention")
         if tuple(cfg.seaformer_depths) != (2, 2, 2):

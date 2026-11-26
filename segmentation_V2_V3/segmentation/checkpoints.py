@@ -121,7 +121,8 @@ def validate_metadata(checkpoint, cfg, *, full_model=False):
     if full_model:
         for key in ("backbone_name", "head_name", "head_width", "num_classes"):
             if key in metadata and metadata[key] != getattr(cfg, key):
-                raise ValueError(f"Full checkpoint {key} differs from current model")
+                raise ValueError(f"Full checkpoint {key} differs from current model: "
+                                 f"checkpoint={metadata[key]}, selected={getattr(cfg, key)}")
 
 
 def load_full_model(model, checkpoint, cfg):

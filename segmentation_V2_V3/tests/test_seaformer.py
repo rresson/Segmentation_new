@@ -174,10 +174,11 @@ def test_pretrain_head_and_actual_checkpoint_resume(tmp_path, capsys):
         run_experiment(replace(resume_cfg, seaformer_depths=(1, 2, 2)))
 
 
-def test_seaformer_never_selects_another_head():
+def test_seaformer_head_selection():
     assert prepare_config(Config(mode="pretrain")).head_name == "mobile_c3"
+    assert prepare_config(Config(mode="pretrain", head_name="mobile_fpn")).head_name == "mobile_fpn"
     with pytest.raises(ValueError, match="mobile_c3"):
-        prepare_config(Config(head_name="mobile_fpn"))
+        prepare_config(Config(head_name="fpn"))
     with pytest.raises(ValueError, match="depths"):
         prepare_config(Config(seaformer_depths=(0, 2, 2)))
 
