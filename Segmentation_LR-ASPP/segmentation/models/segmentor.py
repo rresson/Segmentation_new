@@ -1,0 +1,118 @@
+"""组合 CNN 和分割头，保持原训练和统计接口。"""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+
+import torch
+from torch import Tensor, nn
+
+from ..config import Config
+from .cnn import DemoBackbone, SmallCNNBackbone
+from .heads import FPNHead, SimpleHead
+from .lr_aspp import LRASPPHead
+from .mobile_v3_cnn import MobileV3Backbone
+from .mobile_v3_head import MobileV2C3Head, MobileV2FPNHead, MobileV3FPNHead
+
+
+class Segmentor(nn.Module):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        decode_head: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.backbone = backbone
+        self.decode_head = decode_head
+
+    def forward(self, x: Tensor) -> Tensor:
+        frozen = not any(
+            parameter.requires_grad
+            for parameter in self.backbone.parameters()
+        )
+
+        # 全部冻结时关闭 backbone 的梯度记录。
+        # 部分微调时保留完整梯度路径。
+        with torch.no_grad() if frozen else nullcontext():
+            if isinstance(self.decode_head, MobileV2FPNHead):
+                features = self.backbone(x, return_pyramid=True)
+            else:
+                features = self.backbone(x)
+
+        if isinstance(self.decode_head, MobileV2C3Head):
+            features = [features[2]]  # 只把最终 fusion 输出接到 C3 路径。
+        elif isinstance(self.decode_head, LRASPPHead):
+            features = (features[0], features[2])  # f1 跳连，f3 提供高层语义。
+        return self.decode_head(features)
+
+
+def build_model(cfg: Config, *, initialize_stem: bool | None = None) -> Segmentor:
+    backbone: (
+        SmallCNNBackbone
+        | DemoBackbone
+        | MobileV3Backbone
+    )
+
+    if cfg.backbone_name == "small_cnn":
+        backbone = SmallCNNBackbone()
+    elif cfg.backbone_name == "demo":
+        backbone = DemoBackbone()
+    elif cfg.backbone_name == "mobile_v3":
+        backbone = MobileV3Backbone()
+    elif cfg.backbone_name == "seaformer":
+        # 延迟导入：旧模型无需安装 torchvision；恢复完整权重不需要联网。
+        from .seaformer import SeaFormerBackbone
+
+        if initialize_stem is None:
+            initialize_stem = cfg.stem_pretrained and not (
+                cfg.resume or cfg.backbone_checkpoint or cfg.model_checkpoint
+            )
+        backbone = SeaFormerBackbone(
+            pretrained_stem=bool(initialize_stem),
+            attention=cfg.seaformer_attention,
+            depths=cfg.seaformer_depths,
+            use_learnable_squeeze=cfg.seaformer_learnable_squeeze,
+        )
+    else:
+        raise ValueError(
+            f"未知 backbone：{cfg.backbone_name}"
+        )
+
+    head: nn.Module
+
+    if cfg.backbone_name == "seaformer" and cfg.head_name not in ("mobile_c3", "lr_aspp", "mobile_fpn"):
+        raise ValueError("SeaFormer requires mobile_c3, lr_aspp or mobile_fpn")
+
+    if cfg.head_name == "lr_aspp":
+        if cfg.backbone_name != "seaformer":
+            raise ValueError("lr_aspp requires the V2 SeaFormer backbone")
+        head = LRASPPHead(backbone.out_channels[2], cfg.num_classes, cfg.head_width)
+    elif cfg.head_name == "mobile_c3":
+        if cfg.backbone_name != "seaformer":
+            raise ValueError("mobile_c3 requires the uploaded MobileV2 backbone")
+        head = MobileV2C3Head(cfg.num_classes, cfg.head_width)
+    elif cfg.head_name == "fpn":
+        head = FPNHead(
+            backbone.out_channels,
+            cfg.num_classes,
+            cfg.head_width,
+        )
+    elif cfg.head_name == "simple":
+        head = SimpleHead(cfg.num_classes)
+    elif cfg.head_name == "mobile_fpn" and cfg.backbone_name == "seaformer":
+        head = MobileV2FPNHead(cfg.num_classes, cfg.head_width)
+    elif cfg.head_name == "mobile_fpn":
+        head = MobileV3FPNHead(
+            backbone.out_channels,
+            cfg.num_classes,
+            cfg.head_width,
+        )
+    else:
+        raise ValueError(
+            f"未知分割头：{cfg.head_name}"
+        )
+
+    return Segmentor(
+        backbone=backbone,
+        decode_head=head,
+    )
