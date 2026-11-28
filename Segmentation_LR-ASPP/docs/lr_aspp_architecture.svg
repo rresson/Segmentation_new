@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="940" viewBox="0 0 1200 940" role="img" aria-labelledby="title desc">
+<title id="title">LR-ASPP 分割头结构图</title>
+<desc id="desc">V2 的 f3 经下采样，分为带有 168→552→168 残差块的语义分支与池化门控。二者相乘后上采样并分类，与 f1 的分类结果相加。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 z" fill="#475569"/></marker></defs>
+<style>text {font-family:'Noto Sans CJK SC','Microsoft YaHei',sans-serif;fill:#162d42}.label{font-size:17px}.small{font-size:15px;fill:#3c5365}.title{font-size:37px;font-weight:700}.heading{font-size:20px;font-weight:700}.op{font-size:24px;font-weight:700}.edge{fill:none;stroke:#475569;stroke-width:2.2;stroke-linejoin:round;marker-end:url(#arrow)}</style>
+<rect width="1200" height="940" fill="#f8fafc"/>
+<text x="45" y="55" class="title" text-anchor="start">LR-ASPP  分割头结构</text>
+<text x="46" y="88" class="small" text-anchor="start">输入 RGB 256 × 256   ·   张量尺寸为 C × H × W   ·   ADE20K 150 类</text>
+<text x="1155" y="59" class="heading" text-anchor="end">249,924 个可训练参数</text>
+<rect x="140" y="117" width="580" height="65" rx="12" fill="#e8f0f7" stroke="#839ab0" stroke-width="1.7"/>
+<text x="430" y="145" class="heading" text-anchor="middle">f3  ·  V2 最终融合特征</text>
+<text x="430" y="168" class="small" text-anchor="middle">64 × 32 × 32</text>
+<rect x="850" y="117" width="295" height="65" rx="12" fill="#e8f0f7" stroke="#839ab0" stroke-width="1.7"/>
+<text x="997" y="145" class="heading" text-anchor="middle">f1  ·  V2 首层融合特征</text>
+<text x="997" y="168" class="small" text-anchor="middle">64 × 32 × 32</text>
+<path class="edge" d="M430 182 V208"/>
+<rect x="220" y="210" width="420" height="63" rx="12" fill="#fff" stroke="#9eb0bd" stroke-width="1.7"/>
+<text x="430" y="237" class="label" text-anchor="middle">2×2 平均池化，步长 2</text>
+<text x="430" y="259" class="small" text-anchor="middle">64 × 16 × 16</text>
+<path class="edge" d="M430 273 V298 H235 V322"/>
+<path class="edge" d="M430 298 H642 V322"/>
+<rect x="44" y="324" width="382" height="268" rx="12" fill="#eaf5f0" stroke="#6d9b83" stroke-width="1.7"/>
+<text x="235" y="358" class="heading" text-anchor="middle">高层语义分支</text>
+<path d="M64 372H406" fill="none" stroke="#ced9df"/>
+<text x="235" y="400" class="label" text-anchor="middle">z = 1×1 卷积 64→168 · BN · ReLU</text>
+<text x="235" y="438" class="label" text-anchor="middle">1×1 扩展 168→552 · BN · ReLU</text>
+<text x="235" y="471" class="label" text-anchor="middle">3×3 逐通道卷积 · BN · ReLU</text>
+<text x="235" y="504" class="label" text-anchor="middle">1×1 投影 552→168 · BN，得到 R(z)</text>
+<path d="M64 520H406" fill="none" stroke="#ced9df"/>
+<text x="235" y="548" class="heading" text-anchor="middle">ReLU(z + R(z))</text>
+<text x="235" y="574" class="small" text-anchor="middle">168 × 16 × 16</text>
+<rect x="460" y="324" width="364" height="268" rx="12" fill="#ecf3fc" stroke="#7796b9" stroke-width="1.7"/>
+<text x="642" y="358" class="heading" text-anchor="middle">上下文门控</text>
+<path d="M480 372H804" fill="none" stroke="#ced9df"/>
+<text x="642" y="400" class="label" text-anchor="middle">大窗口平均池化，步长 (16, 20)</text>
+<text x="642" y="430" class="small" text-anchor="middle">核按轴取 min(49, 特征尺寸)</text>
+<text x="642" y="471" class="label" text-anchor="middle">1×1 卷积 64→168 · Sigmoid</text>
+<text x="642" y="505" class="label" text-anchor="middle">双线性插值到高层尺寸</text>
+<path d="M480 520H804" fill="none" stroke="#ced9df"/>
+<text x="642" y="549" class="heading" text-anchor="middle">门控权重</text>
+<text x="642" y="574" class="small" text-anchor="middle">168 × 16 × 16</text>
+<path class="edge" d="M997 182 V322"/>
+<rect x="850" y="324" width="295" height="134" rx="12" fill="#fff5e9" stroke="#ba996b" stroke-width="1.7"/>
+<text x="997" y="358" class="heading" text-anchor="middle">低层跳连</text>
+<path d="M868 372H1127" fill="none" stroke="#ced9df"/>
+<text x="997" y="403" class="label" text-anchor="middle">1×1 分类卷积 64→150</text>
+<text x="997" y="435" class="small" text-anchor="middle">150 × 32 × 32</text>
+<path class="edge" d="M235 592 V630 H410"/>
+<path class="edge" d="M642 592 V630 H450"/>
+<circle cx="430" cy="630" r="18" fill="#fff" stroke="#496778" stroke-width="2"/>
+<text x="430" y="638" class="op" text-anchor="middle">×</text>
+<path class="edge" d="M430 649 V681"/>
+<rect x="190" y="683" width="480" height="81" rx="12" fill="#fff" stroke="#9eb0bd" stroke-width="1.7"/>
+<text x="430" y="712" class="label" text-anchor="middle">双线性上采样至 32×32 → 1×1 分类卷积</text>
+<text x="430" y="744" class="small" text-anchor="middle">168→150 通道   ·   输出 150 × 32 × 32</text>
+<path class="edge" d="M430 764 V802 H647"/>
+<path class="edge" d="M997 458 V802 H687"/>
+<circle cx="667" cy="802" r="18" fill="#fff" stroke="#496778" stroke-width="2"/>
+<text x="667" y="810" class="op" text-anchor="middle">+</text>
+<path class="edge" d="M667 821 V844"/>
+<rect x="427" y="846" width="480" height="64" rx="12" fill="#e8f0f7" stroke="#839ab0" stroke-width="1.7"/>
+<text x="667" y="875" class="heading" text-anchor="middle">分割 logits   ·   150 × 32 × 32</text>
+<text x="667" y="898" class="small" text-anchor="middle">训练或验证时由引擎插值到标签尺寸</text>
+</svg>

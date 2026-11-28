@@ -4,12 +4,6 @@ BACKBONE_MODULES = ("stem", "context1", "context2", "context3",
                     "context_down1", "context_down2", "fusion1", "fusion2", "fusion3")
 
 class UploadedBackbone(nn.Module):
-    def __init__(self, source):
-        super().__init__()
-        for name in BACKBONE_MODULES:
-            self.add_module(name, getattr(source, name))
-        self.out_channels = (source.dim1, source.dim2, source.dim3)
-
     def forward(self, x, *, return_pyramid=False):
         if return_pyramid:
             low_level, spatial = self.stem(x, return_low_level=True)

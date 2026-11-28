@@ -93,8 +93,8 @@ def test_v2_backbone_can_transfer_but_its_full_head_cannot(tmp_path):
         load_backbone(target, replace(cfg, backbone_checkpoint='', model_checkpoint=str(complete)))
 
 @pytest.mark.parametrize('flags,parameters,macs', [
-    ([], 803600, 417021952),
-    (['--seaformer-attention', 'multiscale', '--no-learnable-squeeze'], 993452, 466296832),
+    ([], 1007784, 472576512),
+    (['--seaformer-attention', 'multiscale', '--no-learnable-squeeze'], 1197636, 521851392),
 ])
 def test_profile_cli_selects_new_and_previous_backbone_settings(tmp_path, flags, parameters, macs):
     import json

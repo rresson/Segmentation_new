@@ -18,7 +18,6 @@ from segmentation import Config, run_experiment
 from segmentation.config import prepare_config
 from segmentation.freezing import configure_trainable, set_training_mode
 from segmentation.models import build_model
-from segmentation.models.mobile_v3_head import MobileV3C3Head, MobileV3FPNHead
 from segmentation.models.legacy_seaformer_attention import SeaAttention
 from segmentation.models.seaformer_stem import stem_block
 
@@ -43,22 +42,6 @@ def test_stem_is_original_mobilenet_prefix():
     with torch.no_grad():
         torch.testing.assert_close(original(images), stem(images), rtol=0, atol=0)
     assert stem(images).shape == (2, 64, 9, 13)
-
-
-def test_head_is_exactly_the_original_mobile_c3_branch():
-    reference = MobileV3FPNHead((32, 64, 128), width=16)
-    head = MobileV3C3Head(128, width=16)
-    head.context.load_state_dict(reference.context.state_dict())
-    head.lateral.load_state_dict(reference.lateral[2].state_dict())
-    head.refine.load_state_dict(reference.refine[2].state_dict())
-    head.classifier.load_state_dict(reference.classifier.state_dict())
-    c3 = torch.randn(2, 128, 7, 11)
-    expected = reference.classifier(reference.refine[2](reference.lateral[2](reference.context(c3))))
-    torch.testing.assert_close(head([c3]), expected)
-    assert set(dict(head.named_children())) == {"context", "lateral", "refine", "classifier"}
-    for invalid in ([c3, c3, c3], c3):
-        with pytest.raises(ValueError, match="exactly one"):
-            head(invalid)
 
 
 @pytest.mark.parametrize("variant", ["original", "multiscale", "lepe"])
@@ -176,17 +159,8 @@ def test_pretrain_head_and_actual_checkpoint_resume(tmp_path, capsys):
 
 def test_seaformer_head_selection():
     assert prepare_config(Config(mode="pretrain")).head_name == "lr_aspp"
-    assert prepare_config(Config(mode="pretrain", head_name="mobile_c3")).head_name == "mobile_c3"
-    assert prepare_config(Config(mode="pretrain", head_name="mobile_fpn")).head_name == "mobile_fpn"
-    with pytest.raises(ValueError, match="mobile_c3"):
-        prepare_config(Config(head_name="fpn"))
+    for removed in ("simple", "fpn", "mobile_c3", "mobile_fpn"):
+        with pytest.raises(ValueError, match=r"only seaformer \+ lr_aspp"):
+            prepare_config(Config(mode="pretrain", head_name=removed))
     with pytest.raises(ValueError, match="depths"):
         prepare_config(Config(seaformer_depths=(0, 2, 2)))
-
-
-@pytest.mark.parametrize("backbone,head", [("demo", "simple"), ("small_cnn", "fpn"), ("mobile_v3", "mobile_fpn")])
-def test_existing_models_still_work(backbone, head):
-    model = build_model(Config(backbone_name=backbone, head_name=head)).eval()
-    report = profile_model(model, torch.randn(1, 3, 64, 80))
-    assert report["output_shape"][1] == 150
-    assert report["parameters"] > 0 and report["attention_macs"] == 0

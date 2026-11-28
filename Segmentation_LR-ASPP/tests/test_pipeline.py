@@ -58,18 +58,6 @@ def test_pipeline_budget_and_explicit_limits():
         prepare_config(replace(cfg, early_stopping_patience=-1))
 
 
-def test_pipeline_uses_selected_three_scale_fpn_after_simple_pretraining(tmp_path):
-    cfg = replace(small_config(tmp_path), mode='pretrain', backbone_name='mobile_v3',
-                  head_name='mobile_fpn')
-    joint = run_pipeline(cfg, 1)
-    pretrain = Path(joint['pretrain']['output_dir'])
-    head = Path(joint['head']['output_dir'])
-    assert json.loads((pretrain / 'config.json').read_text())['head_name'] == 'simple'
-    assert json.loads((head / 'config.json').read_text())['head_name'] == 'mobile_fpn'
-    assert joint['head']['head_input_shapes'] == [[2, 32, 16, 16], [2, 64, 8, 8], [2, 128, 4, 4]]
-    assert_frozen_backbone(pretrain / 'backbone_best_miou.pth', head)
-
-
 def test_resume_checkpoint_created_before_early_stopping(tmp_path):
     cfg = replace(small_config(tmp_path), mode='pretrain')
     stage = run_experiment(cfg)
@@ -163,10 +151,8 @@ def test_all_three_choices_keep_lineage_and_exact_frozen_states(tmp_path):
     assert_frozen_backbone(updated_source, root / 'run2/head1')
 
 
-@pytest.mark.parametrize('entrypoint,branches,head', [
-    ('main.py', 1, 'mobile_c3'), ('pipeline.py', 3, 'mobile_fpn'), ('main.py', 2, 'lr_aspp'),
-])
-def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entrypoint, branches, head):
+@pytest.mark.parametrize('entrypoint', ['main.py', 'pipeline.py'])
+def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entrypoint):
     cfg = small_config(tmp_path)
     project = Path(__file__).resolve().parents[1]
     root = tmp_path / 'runs with spaces'
@@ -175,19 +161,16 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
               '--crop-size', '64', '--val-short-side', '64', '--val-max-side', '80',
               '--device', 'cpu', '--no-pretrained-stem']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
-    head_answer = '' if branches == 2 else str(branches)
-    first = subprocess.run(common, input=f'x\n{head_answer}\n1\n', text=True, capture_output=True, cwd=tmp_path,
+    first = subprocess.run(common, input='x\n1\n', text=True, capture_output=True, cwd=tmp_path,
                            env=env, timeout=120)
     assert first.returncode == 0, first.stdout + first.stderr
-    assert first.stdout.index('请输入 head 路数') < first.stdout.index('请选择 [1/2/3]')
-    assert '请输入 1、2 或 3' in first.stdout
+    assert '请输入 head 路数' not in first.stdout and '请选择 [1/2/3]' in first.stdout
     for stage in ('pretrain', 'head1'):
         saved = json.loads((root / 'run1' / stage / 'config.json').read_text())
-        assert (saved['backbone_name'], saved['head_name']) == ('seaformer', head)
+        assert (saved['backbone_name'], saved['head_name']) == ('seaformer', 'lr_aspp')
     assert first.stdout.count('pre-training detection:') == 2
     source = root / 'run1/pretrain/backbone_best_miou.pth'
-    other_branches = 3 if branches == 1 else 1
-    second = subprocess.run(common, input=f'{other_branches}\n2\n"{source}"\n', text=True, capture_output=True,
+    second = subprocess.run(common, input=f'2\n"{source}"\n', text=True, capture_output=True,
                             cwd=tmp_path, env=env, timeout=120)
     assert second.returncode == 0, second.stdout + second.stderr
     assert (root / 'run1/head1/last.pth').is_file()
@@ -195,12 +178,12 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
     assert not (root / 'run2').exists()
     assert_frozen_backbone(source, root / 'run1/head2')
     second_profile = json.loads((root / 'run1/head2/model_profile.json').read_text())
-    assert len(second_profile['head_input_shapes']) == other_branches
+    assert len(second_profile['head_input_shapes']) == 2
     assert second.stdout.count('pre-training detection:') == 1
 
     # 非交互命令也从同一入口进入 pipeline；custom 仅更新 backbone。
 
-    flags = [] if branches == 2 else ['--head-branches', str(branches)]
+    flags = ['--head-branches', '2']
     third = subprocess.run(common + flags + ['--choice', '3', '--checkpoint', str(source)],
                            text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
     assert third.returncode == 0, third.stdout + third.stderr
@@ -214,9 +197,9 @@ def test_interactive_pipeline_and_restarted_process_keep_same_run(tmp_path, entr
         if name.startswith('decode_head.'):
             torch.testing.assert_close(value, trained['model'][name], rtol=0, atol=0)
     assert json.loads((custom / 'pipeline.json').read_text())['choice'] == 3
-    assert json.loads((custom / 'pipeline.json').read_text())['head_name'] == head
-    with pytest.raises(ValueError, match='head_name'):
-        run_pipeline(replace(cfg, output_root=str(root), head_name='mobile_c3' if branches == 3 else 'mobile_fpn'), 3,
+    assert json.loads((custom / 'pipeline.json').read_text())['head_name'] == 'lr_aspp'
+    with pytest.raises(ValueError, match='head_width'):
+        run_pipeline(replace(cfg, output_root=str(root), head_width=16), 3,
                      checkpoint=str(source.with_name('best_miou.pth')))
     assert not (root / 'run3').exists()
 
@@ -231,7 +214,8 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
               '--device', 'cpu', '--no-pretrained-stem',
               '--seaformer-attention', 'multiscale', '--no-learnable-squeeze']
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2'}
-    first = subprocess.run(common + ['--mode=pretrain'], stdin=subprocess.DEVNULL,
+    first = subprocess.run(common + ['--mode=pretrain', '--head-width', '128', '--head-refine-channels', '0'],
+                           stdin=subprocess.DEVNULL,
                            text=True, capture_output=True, cwd=tmp_path, env=env, timeout=120)
     assert first.returncode == 0, first.stdout + first.stderr
     output = root / 'run1/pretrain'
@@ -239,6 +223,9 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
     assert not (output / 'pipeline.json').exists()
     assert not (root / 'run1/head1').exists()
     # 已完成 checkpoint 的续训应直接恢复原目录，不再弹出菜单或创建 run2。
+    checkpoint = torch.load(output / 'last.pth', weights_only=True)
+    del checkpoint['config']['head_refine_channels']  # 原 45K 版本的格式
+    torch.save(checkpoint, output / 'last.pth')
     before = (output / 'history.csv').read_bytes()
     resumed = subprocess.run(common + ['--mode', 'pretrain', '--resume', str(output / 'last.pth')],
                              stdin=subprocess.DEVNULL, text=True, capture_output=True,
@@ -246,6 +233,8 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
     assert resumed.returncode == 0, resumed.stdout + resumed.stderr
     assert '请选择' not in resumed.stdout
     assert '恢复第 2 轮' in resumed.stdout
+    saved = json.loads((output / 'config.json').read_text())
+    assert (saved['head_width'], saved['head_refine_channels']) == (128, 0)
     assert before == (output / 'history.csv').read_bytes()
     assert not (root / 'run2').exists()
 
@@ -255,6 +244,8 @@ def test_main_explicit_mode_and_resume_skip_pipeline(tmp_path):
     ['--resume', 'missing.pth', '--head-epochs', '2'],
     ['--backbone-checkpoint', 'missing.pth'],
     ['--choice', '2'],
+    ['--head-branches', '1'],
+    ['--head-branches', '3'],
 ])
 def test_main_rejects_ambiguous_or_incomplete_cli_before_training(tmp_path, arguments):
     project = Path(__file__).resolve().parents[1]

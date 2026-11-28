@@ -18,7 +18,7 @@ PIPELINE_DEFAULTS = dict(epochs=100, max_train_samples=0, max_val_samples=0,
 
 @dataclass
 class Config:
-    # pretrain：旧 CNN + SimpleHead；V2 SeaFormer 使用选定的分割头。
+    # pretrain：V2 SeaFormer 与 LR-ASPP 联合训练。
     # head：冻结 CNN，只训练所选分割头。
     # custom：使用下面设置的训练范围。
     mode: Literal["pretrain", "head", "custom"] = "custom"
@@ -35,28 +35,16 @@ class Config:
     resume: str = ""
     allow_random_backbone: bool = True
 
-    backbone_name: Literal[
-        "small_cnn",
-        "demo",
-        "mobile_v3",
-        "seaformer",
-    ] = "seaformer"
-
-    head_name: Literal[
-        "fpn",
-        "simple",
-        "mobile_fpn",
-        "mobile_c3",
-        "lr_aspp",
-    ] = "lr_aspp"
+    backbone_name: Literal["seaformer"] = "seaformer"
+    head_name: Literal["lr_aspp"] = "lr_aspp"
 
     stem_pretrained: bool = True
     seaformer_attention: Literal["original", "multiscale", "lepe"] = "original"
     seaformer_depths: tuple[int, int, int] = (2, 2, 2)
     seaformer_learnable_squeeze: bool = True
 
-    # 控制 LR-ASPP 高层投影或 FPN 融合通道，必须为 8 的倍数。
-    head_width: int = 128
+    # stride-16 语义分支的投影宽度。
+    head_width: int | None = 168
 
     trainable_prefixes: tuple[str, ...] = (
            "backbone",
@@ -94,6 +82,7 @@ class Config:
     seed: int = 42
     device: str = "auto"
     early_stopping_patience: int | None = None
+    head_refine_channels: int | None = 552  # 0 可恢复原版 LR-ASPP 计算路径
 
 
 def with_training_defaults(config: Config, defaults: dict) -> Config:
@@ -109,28 +98,18 @@ def with_training_defaults(config: Config, defaults: dict) -> Config:
 def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEFAULTS) -> Config:
     """生成实际配置，不修改调用者传入的对象。"""
     cfg = with_training_defaults(config, training_defaults)
+    if cfg.head_width is None:
+        cfg.head_width = training_defaults.get("head_width", 128 if cfg.resume else 168)
+    if cfg.head_refine_channels is None:
+        cfg.head_refine_channels = training_defaults.get("head_refine_channels", 0 if cfg.resume else 552)
 
     if cfg.run_name and re.fullmatch(r"run[1-9][0-9]*", cfg.run_name) is None:
         raise ValueError("run_name must be empty or run followed by a positive integer")
     if cfg.backbone_checkpoint and cfg.model_checkpoint:
         raise ValueError("Choose backbone_checkpoint OR model_checkpoint")
 
-    if cfg.backbone_name not in (
-        "small_cnn",
-        "demo",
-        "mobile_v3",
-        "seaformer",
-    ):
-        raise ValueError("Unknown backbone_name")
-
-    if cfg.head_name not in (
-        "fpn",
-        "simple",
-        "mobile_fpn",
-        "mobile_c3",
-        "lr_aspp",
-    ):
-        raise ValueError("Unknown head_name")
+    if cfg.backbone_name != "seaformer" or cfg.head_name != "lr_aspp":
+        raise ValueError("This project supports only seaformer + lr_aspp")
 
     if cfg.mode not in ("pretrain", "head", "custom"):
         raise ValueError(
@@ -138,10 +117,6 @@ def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEF
         )
 
     if cfg.mode == "pretrain":
-        if cfg.backbone_name != "seaformer":
-            cfg.head_name = "simple"
-        elif cfg.head_name not in ("lr_aspp", "mobile_fpn"):
-            cfg.head_name = "mobile_c3"
         cfg.trainable_prefixes = (
             "backbone",
             "decode_head",
@@ -152,15 +127,10 @@ def prepare_config(config: Config, *, training_defaults: dict = SINGLE_STAGE_DEF
         cfg.trainable_prefixes = ("decode_head",)
         cfg.allow_random_backbone = False
 
-    if cfg.backbone_name == "seaformer":
-        if cfg.head_name not in ("mobile_c3", "lr_aspp", "mobile_fpn"):
-            raise ValueError("SeaFormer requires mobile_c3, lr_aspp or mobile_fpn")
-        if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
-            raise ValueError("Unknown seaformer_attention")
-        if tuple(cfg.seaformer_depths) != (2, 2, 2):
-            raise ValueError("seaformer_depths must be (2, 2, 2) to match segmentation_V2")
-    elif cfg.head_name in ("mobile_c3", "lr_aspp"):
-        raise ValueError(f"{cfg.head_name} expects the V2 SeaFormer backbone")
+    if cfg.seaformer_attention not in ("original", "multiscale", "lepe"):
+        raise ValueError("Unknown seaformer_attention")
+    if tuple(cfg.seaformer_depths) != (2, 2, 2):
+        raise ValueError("seaformer_depths must be (2, 2, 2) to match segmentation_V2")
 
     cfg.data_root = str(resolve_path(cfg.data_root))
     cfg.output_root = str(resolve_path(cfg.output_root))

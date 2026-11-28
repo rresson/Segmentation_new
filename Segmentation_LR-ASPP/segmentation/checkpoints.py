@@ -22,12 +22,7 @@ def atomic_save(
 
 
 def architecture_name(cfg: Config) -> str:
-    return {
-        "small_cnn": "SmallCNNBackbone_v1",
-        "demo": "DemoBackbone_v1",
-        "mobile_v3": "MobileV3Backbone_v1",
-        "seaformer": "UploadedMobileV2SeaFormer_v1",
-    }[cfg.backbone_name]
+    return "UploadedMobileV2SeaFormer_v1"
 
 
 def export_backbone(
@@ -123,6 +118,8 @@ def validate_metadata(checkpoint, cfg, *, full_model=False):
             if key in metadata and metadata[key] != getattr(cfg, key):
                 raise ValueError(f"Full checkpoint {key} differs from current model: "
                                  f"checkpoint={metadata[key]}, selected={getattr(cfg, key)}")
+        if metadata.get("head_name") == "lr_aspp" and metadata.get("head_refine_channels", 0) != cfg.head_refine_channels:
+            raise ValueError("Full checkpoint head_refine_channels differs from current model")
 
 
 def load_full_model(model, checkpoint, cfg):
@@ -239,6 +236,7 @@ def check_resume_config(
         "backbone_name",
         "head_name",
         "head_width",
+        "head_refine_channels",
         "max_train_samples",
         "max_val_samples",
     )
@@ -248,6 +246,7 @@ def check_resume_config(
         "backbone_name": "demo",
         "head_name": "fpn",
         "head_width": 128,
+        "head_refine_channels": 0,
         "max_train_samples": 0,
         "max_val_samples": 0,
     }

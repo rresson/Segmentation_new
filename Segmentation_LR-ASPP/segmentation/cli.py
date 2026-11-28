@@ -4,9 +4,6 @@ from dataclasses import replace
 
 from . import Config, run_experiment
 
-V2_HEAD_NAMES = {1: "mobile_c3", 2: "lr_aspp", 3: "mobile_fpn"}
-
-
 def add_config_arguments(parser, *, single_stage=True):
     """训练入口和 pipeline 共享数据、模型与优化配置参数。"""
     if single_stage:
@@ -24,8 +21,9 @@ def add_config_arguments(parser, *, single_stage=True):
                  "val-max-side", "max-train-samples", "max-val-samples"):
         parser.add_argument(f"--{name}", type=int)
     parser.add_argument("--head-width", type=int)
-    parser.add_argument("--head-branches", choices=tuple(V2_HEAD_NAMES), type=int,
-                        help="V2 backbone 的分割头路数：1 为 C3，2 为 LR-ASPP，3 为完整 FPN")
+    parser.add_argument("--head-refine-channels", type=int, help="高层残差块的扩展通道，0 关闭此块")
+    parser.add_argument("--head-branches", choices=(2,), type=int,
+                        help="兼容已有 LR-ASPP 命令，仅支持 2（f1 和 f3）")
     if single_stage:
         parser.add_argument("--trainable-prefixes", nargs="+", help="custom 模式的训练范围，例如 backbone")
     parser.add_argument("--seaformer-attention", choices=("original", "multiscale", "lepe"))
@@ -46,37 +44,25 @@ def main(argv=None, *, pipeline_only=False):
     parser.add_argument("--early-stopping-patience", type=int, metavar="N",
                         help="验证 mIoU 连续 N 轮未创新高时结束当前阶段；pipeline 默认 10，0 关闭")
     args = vars(parser.parse_args(argv))
-    head_branches = args.pop("head_branches")
+    args.pop("head_branches")
     if args.get("trainable_prefixes") is not None:
         args["trainable_prefixes"] = tuple(args["trainable_prefixes"])
     pipeline_args = {key: args.pop(key) for key in
                      ("choice", "checkpoint", "pretrain_epochs", "head_epochs")}
     cfg = replace(Config(), **{key: value for key, value in args.items() if value is not None})
-    if head_branches is not None:
-        if cfg.backbone_name != "seaformer":
-            parser.error("--head-branches 用于 V2 SeaFormer backbone。")
-        cfg.head_name = V2_HEAD_NAMES[head_branches]
     single_stage = not pipeline_only and (args.get("mode") is not None or bool(args.get("resume")))
     if single_stage:
         if any(value is not None for value in pipeline_args.values()):
             parser.error("--mode/--resume 不能与 --choice/--checkpoint/阶段轮数混用。")
+        if cfg.resume:
+            # 省略宽度时由训练器从同一次 checkpoint 读取中恢复实际结构。
+            cfg = replace(cfg, head_width=args.get("head_width"),
+                          head_refine_channels=args.get("head_refine_channels"))
         return run_experiment(cfg)
     for key in ("output_dir", "run_name", "backbone_checkpoint", "model_checkpoint", "trainable_prefixes"):
         if args.get(key) is not None:
             parser.error(f"--{key.replace('_', '-')} 用于单阶段训练，请同时指定 --mode；"
                          "pipeline 手动权重请用 --checkpoint。")
-    if cfg.backbone_name == "seaformer" and pipeline_args["choice"] is None and head_branches is None:
-        default = next(number for number, name in V2_HEAD_NAMES.items() if name == cfg.head_name)
-        print("选择 V2 backbone 的分割头：\n1. 单路 C3\n2. LR-ASPP（f1、f3）\n3. 三路 FPN（C1、C2、C3）")
-        while True:
-            try:
-                answer = input(f"请输入 head 路数 [1/2/3]（回车选 {default}）：").strip()
-            except EOFError:
-                parser.error("未读取到 head 路数；非交互运行可指定 --head-branches 和 --choice。")
-            if answer in ("", "1", "2", "3"):
-                cfg.head_name = V2_HEAD_NAMES[int(answer or default)]
-                break
-            print("请输入 1、2 或 3。")
     return launch_pipeline(parser, cfg, **pipeline_args)
 
 
